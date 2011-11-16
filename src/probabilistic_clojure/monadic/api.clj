@@ -167,21 +167,31 @@ no new randomness is created in this case."
 ;; These two functions are used to select the next choice point to be proposed
 ;; They implement the heuristics that memoized choices should be tried more often
 ;; since they got reused several times
-(defn select-prob-choice-dist [database mems]
+(defn- select-prob-choice-dist [database mems]
   (normalize
    (into {} (for [[addr entry] database]
 	      [[addr entry] (if (contains? mems (rest addr))
 			      (mems (rest addr))
 			      1)]))))
 
-(defn calc-select-prob [addr database mems]
+(defn- calc-select-prob [addr database mems]
   (let [total (+ (count database)       ; each entry gets weight one
 		 (reduce + (vals mems)) ; weight of mem-entries
 		 (- (count mems)))]     ; but got double counted
     (if (contains? mems (rest addr))
       (/ (mems (rest addr)) total)
       (/ 1 total))))
-		 
+
+(def ^{:doc "Every *trace-verbose* steps sample-traces ouputs some status information.
+Can be set to false for no output."
+       :dynamic true}
+     *trace-verbose*
+     500)
+
+(defn- output? [idx]
+  (and (number? *trace-verbose*)
+       (= (mod idx *trace-verbose*) 0)))
+
 (defn sample-traces
   "The main routine implementing Metropolis Hastings sampling. Returns a lazy
 sequence of samples when called on a monadic value from this library.
@@ -194,10 +204,10 @@ Burn-in and thinning can be obtained using for example drop and keep-indexed res
 	 (do (println "Starting MH-sampling.")
 	     (sample-traces m-MH database mems log-lik val 1 1)))))
   ([m-MH database mems log-lik val idx num-acc]
-     (when (= (mod idx 500) 0)
+     (when (output? idx)
        (println (str idx ": value " val " with log. likelihood " log-lik))
-       (println (str "Accepted " num-acc " out of last 500 proposals")))
-     (let [num-acc (if (= (mod idx 500) 0) 0 num-acc)
+       (println (str "Accepted " num-acc " out of last " *trace-verbose* " proposals")))
+     (let [num-acc (if (output? idx) 0 num-acc)
 	   [addr entry] (sample-from (select-prob-choice-dist database mems))
 	   prop-val    (apply (:proposer (:choice-point entry)) (:value entry) (:params entry))
 	   ll-prop-val (apply (:get-log-proposal-prob (:choice-point entry))
