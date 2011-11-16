@@ -6,7 +6,7 @@ The system allows to condition and memoize probabilistic choice points and
 can be extended by user defined distributions."}
   probabilistic-clojure.monadic.api
   (:use [clojure.contrib.monads :only (defmonad)]
-	[probabilistic-clojure.utils.sampling :only (sample-from)]
+	[probabilistic-clojure.utils.sampling :only (sample-from normalize)]
 	[probabilistic-clojure.utils.stuff :only (ensure-list error)]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -164,13 +164,31 @@ no new randomness is created in this case."
 	   [val# log-lik# database# log-fwd-prob# (update-in ms# [mem-addr#] inc)])
 	 [val# ll# db# lfp# (assoc ms# mem-addr# 1)]))))
 
+;; These two functions are used to select the next choice point to be proposed
+;; They implement the heuristics that memoized choices should be tried more often
+;; since they got reused several times
+(defn select-prob-choice-dist [database mems]
+  (normalize
+   (into {} (for [[addr entry] database]
+	      [[addr entry] (if (contains? mems (rest addr))
+			      (mems (rest addr))
+			      1)]))))
+
+(defn calc-select-prob [addr database mems]
+  (let [total (+ (count database)       ; each entry gets weight one
+		 (reduce + (vals mems)) ; weight of mem-entries
+		 (- (count mems)))]     ; but got double counted
+    (if (contains? mems (rest addr))
+      (/ (mems (rest addr)) total)
+      (/ 1 total))))
+		 
 (defn sample-traces
   "The main routine implementing Metropolis Hastings sampling. Returns a lazy
 sequence of samples when called on a monadic value from this library.
 Burn-in and thinning can be obtained using for example drop and keep-indexed respectively."
   ([m-MH]
      (println "Trying to find valid trace ...")
-     (loop [[val log-lik database mems] (get-trace m-MH {})]
+     (loop [[val log-lik database _fwd-ll_ mems] (get-trace m-MH {})]
        (if (or (invalid? val) (= log-lik log-prob-zero))
 	 (recur (get-trace m-MH {}))
 	 (do (println "Starting MH-sampling.")
@@ -180,12 +198,7 @@ Burn-in and thinning can be obtained using for example drop and keep-indexed res
        (println (str idx ": value " val " with log. likelihood " log-lik))
        (println (str "Accepted " num-acc " out of last 500 proposals")))
      (let [num-acc (if (= (mod idx 500) 0) 0 num-acc)
-	   [addr entry] (rand-nth (for [[addr entry] database,
-					en (repeat (if (contains? mems (rest addr))
-						     (mems (rest addr))
-						     1)
-						   entry)]
-				    [addr en]))
+	   [addr entry] (sample-from (select-prob-choice-dist database mems))
 	   prop-val    (apply (:proposer (:choice-point entry)) (:value entry) (:params entry))
 	   ll-prop-val (apply (:get-log-proposal-prob (:choice-point entry))
 			      prop-val (:value entry) (:params entry))
@@ -196,14 +209,15 @@ Burn-in and thinning can be obtained using for example drop and keep-indexed res
 		      (-> (inactivate-all database)
 			  (assoc-in [addr :value] prop-val)
 			  (assoc-in [addr :log-lik]
-				    (apply (:get-log-prob (:choice-point entry)) prop-val (:params entry)))))]
+				    (apply (:get-log-prob (:choice-point entry))
+					   prop-val (:params entry)))))]
        (if (invalid? next-val) ; trace was rejected => retry
 	 (lazy-seq (cons val (sample-traces m-MH database mems log-lik val (inc idx) num-acc)))
-	 ; (recur m-MH database log-lik val)
 	 (let [[next-database log-bwd-prob] (clean-db-back next-database)]
 	   (if (< (Math/log (rand))
 	   	  (+ (- next-log-lik log-lik)
-	   	     (Math/log (/ (count database) (count next-database)))
+		     (- (Math/log (calc-select-prob addr next-database next-mems))
+			(Math/log (calc-select-prob addr database mems)))
 	   	     (- ll-val ll-prop-val)
 	   	     (- log-bwd-prob log-fwd-prob)))
 	     (lazy-seq (cons next-val (sample-traces m-MH next-database next-mems
