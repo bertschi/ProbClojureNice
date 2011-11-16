@@ -160,8 +160,7 @@ no new randomness is created in this case."
 	   ;; which identifies it according to its arguments
 	   [val# ll# db# lfp# ms#] (~m-MH-form mem-addr# database# log-fwd-prob# log-lik# mems#)]
        (if (contains? mems# mem-addr#)
-	 (do ;; (assert (= database# db#))
-	   [val# log-lik# database# log-fwd-prob# (update-in ms# [mem-addr#] inc)])
+	 [val# log-lik# database# log-fwd-prob# (update-in ms# [mem-addr#] inc)]
 	 [val# ll# db# lfp# (assoc ms# mem-addr# 1)]))))
 
 ;; These two functions are used to select the next choice point to be proposed
