@@ -1,0 +1,17 @@
+This is an implementation of the probability monad. Inspired by the bher compiler of the
+MIT Scheme dialect Church (see http://projects.csail.mit.edu/church/wiki/Church) it
+uses Metropolis Hastings MCMC to sample from probabilistic programs.
+
+The file src/probabilistic_clojure/monadic/api.clj contains the basic API for using the
+library. In the same directory, the file demos.clj demonstrates how generative models
+can be implemented. It relies on incanter (available from incanter.org) for graphical
+output and probability distributions.
+
+For a quick start clone the repository, add the src directory (as well as incanter.jar)
+to your Java classpath and (use 'probabilistic-clojure.monadic.demos). Then run
+(test-mixture mixture-mem) to fit a Dirichlet mixture of Gaussian with three components
+to some test data.
+
+LICENSE
+
+This software is released under the LGPL. See COPYING.LESSER for details.
