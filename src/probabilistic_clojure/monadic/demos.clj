@@ -26,7 +26,7 @@ graphical output."}
 	 :only (probabilistic-sampling-m make-choice-point cond-data mem sample-traces flip log-prob-zero)]
 	[probabilistic-clojure.utils.sampling :only (density sample-from)]
 	[probabilistic-clojure.utils.stuff :only (transpose)])
-  (:use [clojure.contrib.monads :only (domonad m-bind m-result with-monad)])
+  (:use [clojure.algo.monads :only (domonad m-bind m-result with-monad)])
   (:use [incanter.core :only (gamma view)]
 	[incanter.stats :only (sample-normal pdf-normal sample-dirichlet sample-beta pdf-beta mean)]
 	[incanter.charts :only (histogram xy-plot add-lines)]))
