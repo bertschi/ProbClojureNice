@@ -22,7 +22,7 @@ which uses Metropolis Hastings sampling.
 The system allows to condition and memoize probabilistic choice points and
 can be extended by user defined distributions."}
   probabilistic-clojure.monadic.api
-  (:use [clojure.contrib.monads :only (defmonad)]
+  (:use [clojure.algo.monads :only (defmonad)]
 	[probabilistic-clojure.utils.sampling :only (sample-from normalize)]
 	[probabilistic-clojure.utils.stuff :only (ensure-list error)]))
 
@@ -127,7 +127,7 @@ See the source code of flip for an example."
 		  (assoc database addr
 			 (DBentry. val ll :active name params
 				   (ChoicePoint. sampler get-log-prob proposer get-log-proposal-prob)))
-		  (+ log-fwd-prob ll) mems]))]				  
+		  (+ log-fwd-prob ll) mems]))]
 	 (if (contains? database addr)
 	   (let [entry (database addr)]
 	     (if (= (:params entry) params)
