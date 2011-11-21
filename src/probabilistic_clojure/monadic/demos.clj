@@ -80,7 +80,7 @@ graphical output."}
 		       (fn [x mu sdev] (Math/log (pdf-normal x :mean mu :sd sdev)))
 		       (fn [x mu sdev] (sample-normal 1 :mean x :sd proposal-sd))
 		       (fn [new-x old-x mu sdev]
-			 (Math/log (pdf-normal new-x :mean old-x :sd proposal-sd 0.7))))))
+			 (Math/log (pdf-normal new-x :mean old-x :sd proposal-sd))))))
 
 (defn pdf-dirichlet [ps alphas]
   (let [norm (/ (reduce * (map gamma alphas))
