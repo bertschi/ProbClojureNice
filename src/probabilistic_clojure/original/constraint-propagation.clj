@@ -29,8 +29,8 @@
   (:use [incanter.core :only (gamma view)]
 	[incanter.stats :only (sample-normal pdf-normal sample-dirichlet sample-beta pdf-beta mean)]
 	[incanter.charts :only (histogram xy-plot add-lines bar-chart line-chart add-categories)])
-  (:import org.apache.commons.math.special.Gamma))
-;;  (:import cern.jet.stat.tdouble.Gamma))
+;;  (:import org.apache.commons.math.special.Gamma))
+  (:import cern.jet.stat.tdouble.Gamma))
 
 (defrecord State
   [choice-points recomputed newly-created possibly-removed failed?])
@@ -38,7 +38,7 @@
 (defn fresh-state [choice-points]
   (State. choice-points #{} #{} #{} false))
 
-(def *global-store*
+(def ^:dynamic *global-store*
      (atom (fresh-state {})))
 
 (defmacro with-fresh-store [choice-points & body]
@@ -93,13 +93,13 @@
       :calc-log-lik (fn [x p] (Math/log (if x p (- 1 p))))
       :proposer (fn [cp old-x] [(not old-x) 0 0])})
 
-(def *call-stack* (list))
+(def ^:dynamic *call-stack* (list))
 
 (defn current-caller []
   (when (seq *call-stack*)
     (first *call-stack*)))
 
-(def *addr* (list))
+(def ^:dynamic *addr* (list))
 
 (defn make-addr [tag]
   (cons tag *addr*))
@@ -366,11 +366,13 @@
   (:failed? @*global-store*))
 
 (defn find-valid-trace [prob-chunk]
-  (with-fresh-store {}
-    (let [cp (prob-chunk)]
-      (if (trace-failed?)
-	(recur prob-chunk)
-	[cp (:choice-points @*global-store*)]))))
+  (let [result (with-fresh-store {}
+		 (let [cp (prob-chunk)]
+		   (when-not (trace-failed?)
+		     [cp (-> @*global-store* :choice-points)])))]
+    (if result
+      result
+      (recur prob-chunk))))
 
 ;;; The example that is supposed to work
 
@@ -404,7 +406,7 @@
        
 (defn test-monte-carlo [num-samples prob-chunk]
   (frequencies (repeatedly num-samples
-			   (fn [] (first (find-valid-trace prob-chunk))))))
+			   (fn [] (gv (first (find-valid-trace prob-chunk)))))))
 
 (defn total-log-lik [cp-names]
   (reduce + (map (fn [cp-name]
