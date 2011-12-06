@@ -75,8 +75,113 @@ can be extended by user defined distributions."}
    :whole whole :body body
    :dependents #{} :depends-on #{}})
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
+;;; Stuff to name choice points
+;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(def ^:dynamic *call-stack* (list))
+
+(defn current-caller []
+  (when (seq *call-stack*)
+    (first *call-stack*)))
+
+;;; TODO: change this s.t. addr can be generated automatically [(with-tag <tag> ...) for local name change]
+
+(def ^:dynamic *addr* (list))
+
+(defn make-addr [tag]
+  (cons tag *addr*))
+
+(defmacro within [name & body]
+  `(binding [*addr* ~name
+	     *call-stack* (cons ~name *call-stack*)]
+     ~@body))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
+;;; Tracking dependencies between choice points
+;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn update-dependencies [cp-name]
+  (let [caller-name (current-caller)]
+    (when caller-name
+      (update-in-store! [:choice-points caller-name :depends-on]
+			conj cp-name)
+      (update-in-store! [:choice-points cp-name :dependents]
+			conj caller-name))))
+
+(defn retract-dependent [cp-name dependent-name]
+  (assert (contains? (fetch-store :choice-points (get cp-name) :dependents) dependent-name))
+  (update-in-store! [:choice-points cp-name :dependents]
+		    disj dependent-name)
+  (when (empty? (fetch-store :choice-points (get cp-name) :dependents))
+    (update-in-store! [:possibly-removed]
+		      conj cp-name)))
+
+(defn recompute-value [cp]
+  (let [name (:name cp)]
+    (update-in-store! [:recomputed] conj name)
+    (within name
+      (let [depended-on (fetch-store :choice-points (get name) :depends-on)]
+	(assoc-in-store! [:choice-points name :depends-on] #{})
+	(let [val ((:body cp))]
+	  (doseq [used (difference depended-on
+				   (fetch-store :choice-points (get name) :depends-on))]
+	    (retract-dependent used name))
+	  (assoc-in-store! [:choice-points name :recomputed] val)
+	  val)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
+;;; Deterministic choice points
+;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defn make-det-cp [name whole body]
   (make-choice-point name ::deterministic whole body))
+
+(defn det-cp-fn [name whole-fn body-fn]
+  (if (contains? (fetch-store :choice-points) name)
+    ((fetch-store :choice-points) name)
+    (let [det-cp (make-det-cp name whole-fn body-fn)]
+      (update-in-store! [:newly-created]
+			conj name)
+      (assoc-in-store! [:choice-points name]
+		       det-cp)
+      (recompute-value det-cp)
+      (fetch-store :choice-points (get name)))))
+  
+(defmacro det-cp [tag & body]
+  `(let [addr# *addr*
+	 name# (make-addr ~tag)
+	 body-fn# (fn [] ~@body)
+	 whole-fn# (atom nil)]
+     (swap! whole-fn#
+	    (constantly
+	      (fn []
+		(det-cp-fn name# @whole-fn# body-fn#))))
+     (det-cp-fn name# @whole-fn# body-fn#)))
+
+(defmulti gv :type)
+
+(defmethod gv ::deterministic
+  [det-cp]
+  (let [name (:name det-cp)]
+    (if (contains? (fetch-store :choice-points) name)
+      (let [val (fetch-store :choice-points (get name) :recomputed)]
+	(update-dependencies name)
+	val)
+      ;; the choice point is not in the trace, thus we have to recreate it first
+      (gv ((:whole det-cp))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
+;;; Probabilistic choice points
+;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn sample [prob-cp]
   (apply (:sampler prob-cp) (:recomputed prob-cp)))
@@ -91,6 +196,24 @@ can be extended by user defined distributions."}
   (merge (make-choice-point name ::probabilistic whole body)
 	 {:value no-value :log-lik 0 :sampler sampler :calc-log-lik calc-log-lik
 	  :proposer proposer :conditioned? false}))
+
+(defn prob-cp-fn [name whole-fn body-fn dist]
+  (if (contains? (fetch-store :choice-points) name)
+    ((fetch-store :choice-points) name)
+    (let [prob-cp (make-prob-cp name whole-fn body-fn
+				(:sampler dist)
+				(:calc-log-lik dist)
+				(:proposer dist))]
+      (update-in-store! [:newly-created]
+			conj name)
+      (assoc-in-store! [:choice-points name]
+		       prob-cp)
+      (recompute-value prob-cp)
+      (let [params (fetch-store :choice-points (get name) :recomputed)]
+	(assoc-in-store! [:choice-points name :value]
+			 (sample (fetch-store :choice-points (get name))))
+	(update-log-lik name)
+	(fetch-store :choice-points (get name))))))
 
 (defn create-dist-map [params dist-spec]
   (when-not (vector? params)
@@ -137,97 +260,57 @@ for an example."
 		   (prob-cp-fn ~'tag-name# @~'whole-fn# ~'body-fn# ~'~dist-map))))
 	 (prob-cp-fn ~'tag-name# @~'whole-fn# ~'body-fn# ~'~dist-map)))))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;
-;;; Stuff to name choice points
-;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defn update-log-lik [prob-cp-name]
+  (let [prob-cp (fetch-store :choice-points (get prob-cp-name))]
+    (assoc-in-store!
+	   [:choice-points prob-cp-name :log-lik]
+	   (calc-log-lik prob-cp (:value prob-cp)))))
 
-(def ^:dynamic *call-stack* (list))
-
-(defn current-caller []
-  (when (seq *call-stack*)
-    (first *call-stack*)))
-
-;;; TODO: change this s.t. addr can be generated automatically [(with-tag <tag> ...) for local name change]
-
-(def ^:dynamic *addr* (list))
-
-(defn make-addr [tag]
-  (cons tag *addr*))
-
-(defmacro within [name & body]
-  `(binding [*addr* ~name
-	     *call-stack* (cons ~name *call-stack*)]
-     ~@body))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;
-;;; Tracking dependencies between choice points
-;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(defn retract-dependent [cp-name dependent-name]
-  (assert (contains? (fetch-store :choice-points (get cp-name) :dependents) dependent-name))
-  (update-in-store! [:choice-points cp-name :dependents]
-		    disj dependent-name)
-  (when (empty? (fetch-store :choice-points (get cp-name) :dependents))
-    (update-in-store! [:possibly-removed]
-		      conj cp-name)))
-
-(defn recompute-value [cp]
-  (let [name (:name cp)]
-    (update-in-store! [:recomputed] conj name)
-    (within name
-      (let [depended-on (fetch-store :choice-points (get name) :depends-on)]
-	(assoc-in-store! [:choice-points name :depends-on] #{})
-	(let [val ((:body cp))]
-	  (doseq [used (difference depended-on
-				   (fetch-store :choice-points (get name) :depends-on))]
-	    (retract-dependent used name))
-	  (assoc-in-store! [:choice-points name :recomputed] val)
-	  val)))))
-
-(defn det-cp-fn [name whole-fn body-fn]
-  (if (contains? (fetch-store :choice-points) name)
-    ((fetch-store :choice-points) name)
-    (let [det-cp (make-det-cp name whole-fn body-fn)]
-      (update-in-store! [:newly-created]
-			conj name)
-      (assoc-in-store! [:choice-points name]
-		       det-cp)
-      (recompute-value det-cp)
-      (fetch-store :choice-points (get name)))))
-  
-(defmacro det-cp [tag & body]
-  `(let [addr# *addr*
-	 name# (make-addr ~tag)
-	 body-fn# (fn [] ~@body)
-	 whole-fn# (atom nil)]
-     (swap! whole-fn#
-	    (constantly
-	      (fn []
-		(det-cp-fn name# @whole-fn# body-fn#))))
-     (det-cp-fn name# @whole-fn# body-fn#)))
-
-(defn update-dependencies [cp-name]
-  (let [caller-name (current-caller)]
-    (when caller-name
-      (update-in-store! [:choice-points caller-name :depends-on]
-			conj cp-name)
-      (update-in-store! [:choice-points cp-name :dependents]
-			conj caller-name))))
-
-(defmulti gv :type)
-
-(defmethod gv ::deterministic
-  [det-cp]
-  (let [name (:name det-cp)]
+(defmethod gv ::probabilistic
+  [prob-cp]
+  (let [name (:name prob-cp)]
     (if (contains? (fetch-store :choice-points) name)
-      (let [val (fetch-store :choice-points (get name) :recomputed)]
+      (let [val (fetch-store :choice-points (get name) :value)]
 	(update-dependencies name)
 	val)
       ;; the choice point is not in the trace, thus we have to recreate it first
-      (gv ((:whole det-cp))))))
+      (gv ((:whole prob-cp))))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
+;;; Metropolis Hastings sampling
+;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;; Traces failures
+
+(defn trace-failure []
+  (assoc-in-store! [:failed?] true))
+
+(defn trace-failed? []
+  (fetch-store :failed?))
+
+;;; Sampling routines
+
+(defn find-valid-trace [prob-chunk]
+  (let [result (with-fresh-store {}
+		 (let [cp (prob-chunk)]
+		   (when-not (trace-failed?)
+		     [cp (fetch-store :choice-points)])))]
+    (if result
+      result
+      (recur prob-chunk))))
+
+(defn cp-value [cp choice-points]
+  (if (= (:type cp) ::deterministic)
+    (:recomputed (get choice-points (:name cp)))
+    (:value (get choice-points (:name cp)))))
+
+(defn monte-carlo-sampling
+  "Simple Monte-Carlo sampling scheme which simply runs the probabilistic program
+num-samples many times. Returns a lazy sequence of the obtained outcomes."
+  [num-samples prob-chunk]
+  (repeatedly num-samples
+	      (fn [] (let [[cp choice-points] (find-valid-trace prob-chunk)]
+				(cp-value cp choice-points)))))
 

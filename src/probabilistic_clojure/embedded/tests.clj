@@ -19,7 +19,9 @@
     ^{:author "Nils Bertschinger"
       :doc "Tests for probabilistic-clojure.embedded"}
   probabilistic-clojure.embedded.tests
-  (:use probabilistic-clojure.embedded.api))
+  (:use probabilistic-clojure.embedded.api
+	probabilistic-clojure.utils.sampling
+	probabilistic-clojure.embedded.demos))
 
 ;;; TODO: use testing framework and write real unit tests!!!
 
@@ -62,3 +64,6 @@
     (set-value! a true)
     (recompute-value c)
     (show-cps)))
+
+(defn test-bayes-net [bayes-net]
+  (density (monte-carlo-sampling 25000 bayes-net)))

@@ -30,6 +30,6 @@ of probabilistic choice points."}
 
 (def-prob-cp flip-cp [p]
   :sampler [] (< (rand) p)
-  :calc-log-lik [b] (Math/log (if x p (- 1 p)))
+  :calc-log-lik [bool] (Math/log (if bool p (- 1 p)))
   ;; proposer returns a vector of [new-value forward-log-prob backward-log-prob]
-  :proposer [b0] [(not b0) 0 0])
+  :proposer [bool] [(not bool) 0 0])

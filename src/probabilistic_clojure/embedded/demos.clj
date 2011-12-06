@@ -27,6 +27,8 @@
   (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure)]
 	[probabilistic-clojure.embedded.choice-points :only (flip-cp)]))
 
+(in-ns 'probabilistic-clojure.embedded.demos)
+
 ;;; Simple Bayes net as a first example
 
 (defn noisy-or [x y]
@@ -37,10 +39,23 @@
 
 (defn grass-bayes-net []
   (det-cp :grass-bayes-net
-   (let [rain (flip-cp 0.3)
-	 sprinkler (flip-cp 0.5)
+   (let [rain (flip-cp :rain 0.3)
+	 sprinkler (flip-cp :sprinkler 0.5)
 	 grass-is-wet (gv (noisy-or rain sprinkler))]
      (when-not grass-is-wet
        (trace-failure))
      (gv rain))))
+
+(defn grass-bayes-net-fixed []
+  (det-cp :grass-bayes-net-fixed
+   (let [rain      (gv (flip-cp :rain      0.3))
+	 sprinkler (gv (flip-cp :sprinkler 0.5))
+	 noise-x   (gv (flip-cp :noise-x   0.9))
+	 noise-y   (gv (flip-cp :noise-y   0.8))
+	 noise-z   (gv (flip-cp :noise-z   0.1))]
+     (if (or (and rain      noise-x)
+	     (and sprinkler noise-y)
+	     noise-z)
+       rain
+       (trace-failure)))))
 
