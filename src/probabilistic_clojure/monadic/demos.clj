@@ -25,8 +25,9 @@ graphical output."}
   (:use [probabilistic-clojure.monadic.api
 	 :only (probabilistic-sampling-m make-choice-point cond-data mem sample-traces flip log-prob-zero)]
 	[probabilistic-clojure.utils.sampling :only (density sample-from)]
-	[probabilistic-clojure.utils.stuff :only (transpose)])
-  (:use [clojure.algo.monads :only (domonad m-bind m-result with-monad)])
+	[probabilistic-clojure.utils.stuff :only (transpose)]
+	[probabilistic-clojure.utils.finite-distributions :only (cond-dist-m normalize-cond choose)])
+  (:use [clojure.algo.monads :only (domonad defmonadfn m-bind m-result with-monad)])
   (:use [incanter.core :only (gamma view)]
 	[incanter.stats :only (sample-normal pdf-normal sample-dirichlet sample-beta pdf-beta mean)]
 	[incanter.charts :only (histogram xy-plot add-lines)]))
@@ -37,8 +38,8 @@ graphical output."}
 ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn noisy-or [x y]
-  (domonad probabilistic-sampling-m
+(defmonadfn noisy-or [x y]
+  (domonad
    [noise-x (flip 0.9)
     noise-y (flip 0.8)
     noise-z (flip 0.1)]
@@ -46,8 +47,8 @@ graphical output."}
        (and y noise-y)
        noise-z)))
 
-(defn grass-bayes-net []
-  (domonad probabilistic-sampling-m
+(defmonadfn grass-bayes-net []
+  (domonad
    [rain      (flip 0.3)
     sprinkler (flip 0.5)
     grass-is-wet (noisy-or rain sprinkler)
@@ -55,9 +56,15 @@ graphical output."}
    rain))
 
 (defn run-grass-example [num-samples]
-  (let [rain (density (take num-samples (sample-traces (grass-bayes-net))))]
-    (println "Given grass-is-wet the probability for rain is " (get rain true))
-    rain))
+  (with-monad probabilistic-sampling-m
+    (let [rain (density (take num-samples (sample-traces (grass-bayes-net))))]
+      (println "Given grass-is-wet the probability for rain is " (get rain true))
+      rain)))
+
+(defn solve-grass-example []
+  (with-redefs [flip (fn [p] (choose p true (- 1 p) false))]
+    (with-monad cond-dist-m
+      (normalize-cond (grass-bayes-net)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
