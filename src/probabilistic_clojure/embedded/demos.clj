@@ -24,8 +24,14 @@
     ^{:author "Nils Bertschinger"
       :doc "Part of probabilistic-clojure.embedded. Collection of demo programs."}
   probabilistic-clojure.embedded.demos
-  (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure)]
-	[probabilistic-clojure.embedded.choice-points :only (flip-cp)]))
+  (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure cond-data sample-traces)]
+	[probabilistic-clojure.utils.sampling :only (sample-from normalize density)]
+	[probabilistic-clojure.embedded.choice-points
+	 :only (flip-cp gaussian-cp dirichlet-cp log-pdf-dirichlet discrete-cp log-pdf-discrete)]
+
+	[incanter.core   :only (view)]
+	[incanter.charts :only (histogram add-lines xy-plot)]
+	[incanter.stats  :only (sample-normal sample-dirichlet pdf-normal mean)]))
 
 (in-ns 'probabilistic-clojure.embedded.demos)
 
@@ -58,4 +64,58 @@
 	     noise-z)
        rain
        (trace-failure)))))
+
+(defn run-bayes-net [model]
+  (density
+   (take 10000 (drop 5000 (sample-traces model)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
+;;; Gaussian mixture models
+;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn generate-data []
+  (let [mu (fn [] (sample-from {-5 0.2, 0 0.7, 8 0.1}))]
+    (lazy-seq (cons (sample-normal 1 :mean (mu))
+		    (generate-data)))))
+
+(def data (take 42 (generate-data)))
+
+(defn mixture [comp-labels data]
+  (let [comp-weights (dirichlet-cp :weights (for [_ comp-labels] 10.0))
+	comp-mus (zipmap comp-labels
+			 (for [label comp-labels] (gaussian-cp [:mu label] 0.0 10.0)))]
+    (loop [points data
+	   idx 0]
+      (when (seq points)
+	(let [comp (discrete-cp [:comp idx] (zipmap comp-labels (gv comp-weights)))]
+	  ;;     mu-comp (det-cp [:mu-comp idx] (gv (get comp-mus (gv comp))))]
+	  ;; (cond-data (gaussian-cp [:mu idx] (gv mu-comp) 1.0) (first points))
+	  (cond-data (gaussian-cp [:mu idx] (gv (get comp-mus (gv comp))) 1.0) (first points))
+	  (recur (rest points)
+		 (inc idx)))))
+    (det-cp :mixture
+      [(into {} (for [[comp mu] comp-mus] [comp (gv mu)]))
+       (gv comp-weights)])))
+
+(defn transpose
+  "Transpose a list of lists, i.e. (transpose [[1 2] [3 4] [5 6]]) = ((1 3 5) (2 4 6))"
+  [lls]
+  (apply map list lls))
+
+(defn test-mixture [comp-labels model]
+  (let [data-plot (histogram data :title "Dataset" :nbins 50 :density true)
+	samples  (take 200 (drop 7500 (sample-traces (fn [] (model comp-labels data)))))
+	comp-mus (map first samples)
+	comp-weights (map second samples)]
+    (let [xs (range -10 10 0.01)
+	  weights (map mean (transpose comp-weights))
+	  mus (map mean (transpose (for [mus comp-mus] [(:a mus) (:b mus) (:c mus)])))]
+      (doto data-plot
+	(add-lines xs (map (fn [x] (* (nth weights 0) (pdf-normal x :mean (nth mus 0)))) xs))
+	(add-lines xs (map (fn [x] (* (nth weights 1) (pdf-normal x :mean (nth mus 1)))) xs))
+	(add-lines xs (map (fn [x] (* (nth weights 2) (pdf-normal x :mean (nth mus 2)))) xs))
+	view)
+      [weights mus])))
 

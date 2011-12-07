@@ -197,6 +197,12 @@ can be extended by user defined distributions."}
 	 {:value no-value :log-lik 0 :sampler sampler :calc-log-lik calc-log-lik
 	  :proposer proposer :conditioned? false}))
 
+(defn update-log-lik [prob-cp-name]
+  (let [prob-cp (fetch-store :choice-points (get prob-cp-name))]
+    (assoc-in-store!
+	   [:choice-points prob-cp-name :log-lik]
+	   (calc-log-lik prob-cp (:value prob-cp)))))
+
 (defn prob-cp-fn [name whole-fn body-fn dist]
   (if (contains? (fetch-store :choice-points) name)
     ((fetch-store :choice-points) name)
@@ -239,7 +245,7 @@ can be extended by user defined distributions."}
 	  (let [[args & body] (find-spec-for :proposer)]
 	    (when-not (vector? args)
 	      (error args " is not a parameter vector as required by ::proposer option"))
-	    `(fn ~args ~@body))))))
+	    `(fn ~(vec (concat args params)) ~@body))))))
 	    
 (defmacro def-prob-cp
   "Macro to define probabilistic choice points.
@@ -259,12 +265,6 @@ for an example."
 		 (fn []
 		   (prob-cp-fn ~'tag-name# @~'whole-fn# ~'body-fn# ~'~dist-map))))
 	 (prob-cp-fn ~'tag-name# @~'whole-fn# ~'body-fn# ~'~dist-map)))))
-
-(defn update-log-lik [prob-cp-name]
-  (let [prob-cp (fetch-store :choice-points (get prob-cp-name))]
-    (assoc-in-store!
-	   [:choice-points prob-cp-name :log-lik]
-	   (calc-log-lik prob-cp (:value prob-cp)))))
 
 (defmethod gv ::probabilistic
   [prob-cp]
@@ -314,3 +314,214 @@ num-samples many times. Returns a lazy sequence of the obtained outcomes."
 	      (fn [] (let [[cp choice-points] (find-valid-trace prob-chunk)]
 				(cp-value cp choice-points)))))
 
+;;; utility functions for sampling
+
+(defn total-log-lik [cp-names choice-points]
+  (reduce + (map (fn [cp-name]
+		   (let [cp (choice-points cp-name)]
+		     (if (= (:type cp) ::probabilistic)
+		       (:log-lik cp)
+		       0)))
+		 cp-names)))
+
+(defn remove-uncalled-choices []
+  (loop [candidate-names (fetch-store :possibly-removed)
+	 result []]
+    (if (empty? candidate-names)
+      result
+      (let [candidate (fetch-store :choice-points (get (first candidate-names)))]
+	(if (empty? (:dependents candidate))
+	  (do (update-in-store! [:choice-points]
+				dissoc (:name candidate))
+	      (doseq [cp-name (:depends-on candidate)]
+		(retract-dependent cp-name (:name candidate)))
+	      (recur (concat (rest candidate-names)
+			     (:depends-on candidate))
+		     (conj result candidate)))
+	  (recur (rest candidate-names) result))))))
+
+;; Version using depth-first traversal to obtain topological ordering
+;; of all choice points which have to updated if cp-name is changed
+(defn ordered-dependencies [cp-name choice-points]
+  (let [visited (atom #{})
+	ordered-deps (atom [])
+	dfs-path (atom #{})
+	back-edge? (fn [cp-name] (@dfs-path cp-name))]
+    (letfn [(dfs-traverse [current-cp-name propagate?]
+	      (swap! visited  conj current-cp-name)
+	      (swap! dfs-path conj current-cp-name)
+	      (let [current-cp (choice-points current-cp-name)
+		    direct-deps (if (or propagate? (= (:type current-cp) ::deterministic))
+				  (:dependents current-cp)
+				  #{})]
+		(doseq [dep-cp-name direct-deps]
+		  (when (back-edge? dep-cp-name)
+		    (error "Cyclic dependencies between " current-cp-name
+			   " and " dep-cp-name " detected!"))
+		  (when-not (@visited dep-cp-name)
+		    (dfs-traverse dep-cp-name false)))
+		(swap! dfs-path disj current-cp-name)
+		(swap! ordered-deps (fn [deps] (cons current-cp-name deps)))))]
+      (dfs-traverse cp-name true)
+      @ordered-deps)))
+
+(defn prob-choice-dist [choice-points]
+  (letfn [(prob-choice? [cp]
+	    (and (= (:type cp) ::probabilistic)
+		 (not (:conditioned? cp))))]
+    (normalize
+     (into {}
+	   (for [[name cp] choice-points
+		 :when (prob-choice? cp)]
+	     [name
+	      (Math/sqrt (count (ordered-dependencies name choice-points)))])))))
+
+(defn propagate-change-to [cp-names]
+  (doseq [dep-cp-name cp-names]
+    (let [dep-cp (fetch-store :choice-points (get dep-cp-name))]
+      (recompute-value dep-cp)
+      (when (= (:type dep-cp) ::probabilistic)
+	(update-log-lik (:name dep-cp))))))
+
+;;; The actual Metropolis Hastings sampling
+
+(defn sampling-step [choice-points]
+  (with-fresh-store choice-points
+    (let [prob-choices (prob-choice-dist choice-points)
+	  selected-cp (choice-points (sample-from prob-choices))
+	  change-set (ordered-dependencies (:name selected-cp) choice-points)
+	  trace-log-lik (total-log-lik change-set choice-points)
+	  
+	  [prop-val fwd-log-lik bwd-log-lik]
+	  (propose selected-cp (:value selected-cp))]
+      (assoc-in-store! [:choice-points (:name selected-cp) :value]
+		       prop-val)
+      (propagate-change-to change-set)
+      (if (trace-failed?)
+	choice-points
+	(let [all-new-choice-points (fetch-store :choice-points)
+	      fwd-trace-log-lik (total-log-lik (fetch-store :newly-created) all-new-choice-points)
+	      removed-cps (remove-uncalled-choices)
+	      bwd-trace-log-lik (total-log-lik (map :name removed-cps) all-new-choice-points)
+	      prop-trace-log-lik (total-log-lik (difference
+						 ;; TODO: What about reweighting of reused choice-points???
+						 ;; (union (set change-set) (-> @*global-store* :newly-created))
+						 (fetch-store :recomputed)
+						 (set (map :name removed-cps)))
+						all-new-choice-points)
+	      prop-prob-choices (prob-choice-dist (fetch-store :choice-points))]
+	  (if (< (Math/log (rand))
+		 (+ (- prop-trace-log-lik trace-log-lik)
+		    (- (Math/log (prop-prob-choices (:name selected-cp)))
+		       (Math/log (prob-choices (:name selected-cp))))
+		    (- bwd-trace-log-lik fwd-trace-log-lik)
+		    (- bwd-log-lik fwd-log-lik)))
+	    (fetch-store :choice-points)
+	    choice-points))))))
+
+(defn sample-traces [prob-chunk]
+  (println "Trying to find a valid trace ...")
+  (let [[cp choice-points] (find-valid-trace prob-chunk)]
+    (println "Started sampling")
+    (letfn [(samples [choice-points idx accepted]
+	      (lazy-seq
+	       (let [val (cp-value cp choice-points)
+		     next-choices (sampling-step choice-points)
+		     output? (= (mod idx 500) 0)
+		     accepted (if (= choice-points next-choices)
+				accepted
+				(inc accepted))]
+		 (when output?
+		   (println idx ": " val)
+		   (println "Log. lik.: " (total-log-lik (keys choice-points) choice-points))
+		   (println "Accepted " accepted " out of last 500 samples"))
+		 (cons val
+		       (samples next-choices (inc idx)
+				(if output? 0 accepted))))))]
+      (samples choice-points 0 0))))
+
+;;; faster sampling for fixed topology ==> TODO: combine for general sampling routine!!!
+
+(defn sampling-step-fixed [choice-points selected all-dependencies]
+  (with-fresh-store choice-points
+    (let [selected-cp (choice-points selected)
+	  change-set  (ordered-dependencies (:name selected-cp) choice-points)
+	  trace-log-lik (total-log-lik change-set choice-points)
+	  
+	  [prop-val fwd-log-lik bwd-log-lik]
+	  (propose selected-cp (:value selected-cp))]
+      (assoc-in-store! [:choice-points (:name selected-cp) :value]
+		       prop-val)
+      (propagate-change-to change-set)
+
+      (if (trace-failed?)
+	[choice-points false]
+	(do (let [removed-cps (remove-uncalled-choices)]
+	      (when-not (empty? (fetch-store :newly-created))
+		(error "New choice points created during fixed sampling: "
+		       (pr-str (map :name (fetch-store :newly-created)))))
+	      (when-not (empty? removed-cps)
+		(error "Choice points deleted during fixed sampling: "
+		       (pr-str (map :name removed-cps)))))
+	    (let [prop-trace-log-lik (total-log-lik (fetch-store :recomputed)
+						    (fetch-store :choice-points))]
+	      (if (< (Math/log (rand))
+		     (+ (- prop-trace-log-lik trace-log-lik)
+			(- bwd-log-lik fwd-log-lik)))
+		[(fetch-store :choice-points) true]
+		[choice-points false])))))))
+
+(defn sample-traces-fixed [prob-chunk select-update]
+  (println "Trying to find a valid trace ...")
+  (let [[cp choice-points] (find-valid-trace prob-chunk)]
+    (println "Generating update sequence ...")
+    (let [update-seq  (select-update (prob-choice-dist choice-points))]
+      (println "Started sampling")
+      (letfn [(samples [choice-points idx accepted update-seq all-dependencies]
+		(if (seq update-seq)
+		  (lazy-seq
+		   (let [val (cp-value cp choice-points)
+			 [next-choices accepted?]
+			 (sampling-step-fixed choice-points
+					      (first update-seq)
+					      all-dependencies)
+			 output? (= (mod idx 500) 0)
+			 accepted (if accepted? (inc accepted) accepted)]
+		     (when output?
+		       (println idx ": " val)
+		       (println "Log. lik.: " (total-log-lik (keys choice-points) choice-points))
+		       (println "Accepted " accepted " out of last 500 samples"))
+		     (cons val
+			   (samples next-choices (inc idx)
+				    (if output? 0 accepted)
+				    (rest update-seq)
+				    all-dependencies))))
+		  ()))]
+	(samples choice-points 0 0 update-seq
+		 (do (println "Caching dependencies ...")
+		     (time
+		      (into {} (for [cp-name (keys choice-points)]
+				 [cp-name (ordered-dependencies cp-name choice-points)])))))))))
+
+;;; Conditioning and memoization
+
+(defn cond-data [prob-cp cond-val]
+  (let [name (:name prob-cp)
+	val  (gv prob-cp)]
+    (if (fetch-store :choice-points (get name) :conditioned?)
+      (do (when-not (= cond-val val)
+	    (error name " is already conditioned on value " val
+		   " and cannot be changed to " cond-val))
+	  cond-val)
+      (do
+	(assoc-in-store! [:choice-points name :value]
+			 cond-val)
+	(assoc-in-store! [:choice-points name :conditioned?]
+			 true)
+	(propagate-change-to (ordered-dependencies name (fetch-store :choice-points)))
+	cond-val))))
+
+(defmacro memo [tag cp-form & memo-args]
+  `(det-cp ~tag
+     (binding [*addr* (list ~@(rest cp-form) ~@memo-args)]
+       (gv ~cp-form))))
