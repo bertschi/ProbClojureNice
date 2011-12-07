@@ -29,6 +29,8 @@ can be extended by user defined distributions."}
   (:use [probabilistic-clojure.utils.sampling :only (sample-from normalize)]
 	[probabilistic-clojure.utils.stuff :only (ensure-list error)]))
 
+(in-ns 'probabilistic-clojure.embedded.api)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
 ;;; Basic data structures for the global store and choice points
@@ -394,22 +396,46 @@ num-samples many times. Returns a lazy sequence of the obtained outcomes."
 	  
 	  [prop-val fwd-log-lik bwd-log-lik]
 	  (propose selected-cp (:value selected-cp))]
+      ;; (println "Proposing: " (:name selected-cp) ": " change-set)
+      ;; (do (println :OLD) (doseq [cp (vals choice-points)] (println (probabilistic-clojure.embedded.tests/cp-str cp))))
       (assoc-in-store! [:choice-points (:name selected-cp) :value]
 		       prop-val)
       (propagate-change-to change-set)
       (if (trace-failed?)
 	choice-points
-	(let [all-new-choice-points (fetch-store :choice-points)
-	      fwd-trace-log-lik (total-log-lik (fetch-store :newly-created) all-new-choice-points)
+	(let [;; _ (do (println :NEW) (doseq [cp (vals (fetch-store :choice-points))] (println (probabilistic-clojure.embedded.tests/cp-str cp))))
+	      _ (assert (clojure.set/subset? (set change-set) (fetch-store :recomputed)))
+	      _ (assert (= (fetch-store :recomputed) (union (set change-set) (fetch-store :newly-created)))
+			(println "Aha " (str [(fetch-store :recomputed) (set change-set) (fetch-store :newly-created)])))
 	      removed-cps (remove-uncalled-choices)
-	      bwd-trace-log-lik (total-log-lik (map :name removed-cps) all-new-choice-points)
-	      prop-trace-log-lik (total-log-lik (difference
-						 ;; TODO: What about reweighting of reused choice-points???
-						 ;; (union (set change-set) (-> @*global-store* :newly-created))
-						 (fetch-store :recomputed)
-						 (set (map :name removed-cps)))
-						all-new-choice-points)
+	      ;; _ (do (println :CLEAN) (doseq [cp (vals (fetch-store :choice-points))] (println (probabilistic-clojure.embedded.tests/cp-str cp))))
+	      _ (assert (empty? (clojure.set/intersection (set (map :name removed-cps)) (fetch-store :newly-created))))
+	      _ (let [new (set (keys (fetch-store :choice-points)))
+		      old (set (keys choice-points))
+		      rem (set (map :name removed-cps))]
+		  (assert (= new (difference (union old (fetch-store :newly-created))
+					     rem))
+			  [old (fetch-store :newly-created) rem new]))
+										
+	      trace-log-lik (total-log-lik change-set ;; (difference (fetch-store :recomputed) (fetch-store :newly-created))
+					   choice-points)
+	      prop-trace-log-lik (total-log-lik (difference (fetch-store :recomputed)
+							    (set (map :name removed-cps)))
+						(fetch-store :choice-points))
+	      
+	      fwd-trace-log-lik (total-log-lik (fetch-store :newly-created) (fetch-store :choice-points))
+	      bwd-trace-log-lik 0 ;; (total-log-lik (map :name removed-cps) choice-points)
+	      ;; prop-trace-log-lik (total-log-lik (difference
+	      ;; 					 ;; TODO: What about reweighting of reused choice-points???
+	      ;; 					 ;; (union (set change-set) (-> @*global-store* :newly-created))
+	      ;; 					 (fetch-store :recomputed))
+	      ;; 					 ;; (set (map :name removed-cps)))
+	      ;; 					(fetch-store :choice-points))
 	      prop-prob-choices (prob-choice-dist (fetch-store :choice-points))]
+	  ;; (when-not (empty? (clojure.set/intersection (fetch-store :recomputed) (set (map :name removed-cps))))
+	  ;;   (print "."))
+	  ;; (when-let [it (seq removed-cps)] (println "Removed: " (pr-str (map :name it)) " (" (count it) ")"))
+	  ;; (when-let [it (seq (fetch-store :newly-created))] (println  "Created: " it " (" (count it) ")"))
 	  (if (< (Math/log (rand))
 		 (+ (- prop-trace-log-lik trace-log-lik)
 		    (- (Math/log (prop-prob-choices (:name selected-cp)))

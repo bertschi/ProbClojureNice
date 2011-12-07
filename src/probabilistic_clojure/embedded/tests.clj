@@ -24,7 +24,15 @@
 	probabilistic-clojure.utils.sampling
 	probabilistic-clojure.embedded.demos))
 
+(in-ns 'probabilistic-clojure.embedded.tests)
+
 ;;; TODO: use testing framework and write real unit tests!!!
+
+(defn cp-str [cp]
+  (str (:name cp) ": "
+       (:recomputed cp)
+       " dependents " (:dependents cp)
+       " depends on " (:depends-on cp)))
 
 (defn test-dynamic-dependencies []
   (with-fresh-store {}
@@ -38,9 +46,7 @@
 		     (println "Newly created: " (:newly-created @*global-store*))
 		     (println "Possibly removed: " (:possibly-removed @*global-store*))
 		     (doseq [[name cp] (:choice-points @*global-store*)]
-		       (println name ": " (:recomputed cp)
-				" dependents " (:dependents cp)
-				" depends on " (:depends-on cp))))
+		       (println (cp-str cp))))
 	  set-value! (fn [cp val]
 		       (assoc-in-store! [:choice-points (:name cp) :recomputed] val))
 	  refresh (fn [] (swap! *global-store* (constantly
@@ -76,3 +82,16 @@
 	  d (det-cp :d (list :d (gv p) (gv c)))
 	  e (det-cp :e (list :e (gv p)))]
       (println (ordered-dependencies (:name a) (fetch-store :choice-points))))))
+
+
+(defn test-retracts-net
+  "Somewhat involved example of a changing topology, to test dependency tracking and sampling."
+  []
+  (let [root       (flip-cp :root  0.5)
+	path-left  (flip-cp :left  (do (gv root) 0.5))
+	path-right (flip-cp :right (do (gv root) 0.5))]
+    (det-cp :result
+      (if (gv root)
+	[:left  (gv path-left)]
+	[:right (gv path-right)]))))
+		     

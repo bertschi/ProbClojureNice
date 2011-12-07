@@ -27,7 +27,7 @@
   (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure cond-data sample-traces)]
 	[probabilistic-clojure.utils.sampling :only (sample-from normalize density)]
 	[probabilistic-clojure.embedded.choice-points
-	 :only (flip-cp gaussian-cp dirichlet-cp log-pdf-dirichlet discrete-cp log-pdf-discrete)]
+	 :only (flip-cp gaussian-cp dirichlet-cp log-pdf-dirichlet discrete-cp log-pdf-discrete dirichlet-process)]
 
 	[incanter.core   :only (view)]
 	[incanter.charts :only (histogram add-lines xy-plot)]
@@ -67,7 +67,7 @@
 
 (defn run-bayes-net [model]
   (density
-   (take 10000 (drop 5000 (sample-traces model)))))
+   (take 7500 (drop 500 (sample-traces model)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -118,4 +118,35 @@
 	(add-lines xs (map (fn [x] (* (nth weights 2) (pdf-normal x :mean (nth mus 2)))) xs))
 	view)
       [weights mus])))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
+;;; Dirichlet process mixture model
+;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn mixture-DP [alpha data]
+  (loop [points data
+	 idx 0
+	 comps (det-cp [:res 0] [0 {}])]
+    (if (seq points)
+      (let [mu-comp (dirichlet-process [::DP idx] alpha (gaussian-cp ::DP 0 15))]
+	(cond-data (gaussian-cp [:mu idx] (gv mu-comp) 1.0) (first points))
+	(recur (rest points) (inc idx)
+	       (det-cp [:res (inc idx)]
+		 (let [[num-comp comp-mus] (gv comps)
+		       mu (gv mu-comp)
+		       mu-count (get comp-mus mu 0)
+		       comp-mus (assoc comp-mus mu (inc mu-count))]
+		   ;; (println (inc idx) ": " mu)
+		   [(count comp-mus) comp-mus]))))
+      comps)))
+
+(defn test-DP [alpha n]
+  (let [res (sample-traces (fn [] (mixture-DP alpha data)))]
+    (loop [x res, i 0]
+      (when (not (> i n))
+	(when (= (mod i 2500) 0)
+	  (print (first x)))
+	(recur (rest x) (inc i))))))
 
