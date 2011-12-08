@@ -40,29 +40,45 @@ can be extended by user defined distributions."}
 (defrecord State
   [choice-points recomputed newly-created possibly-removed failed?])
 
-(defn fresh-state [choice-points]
+(defn fresh-state
+  "Returns a fresh global store containing the given choice points.
+The sets of recomputed, newly-created and possibly-removed choice points
+are all initially empty and failed? is false."
+  [choice-points]
   (State. choice-points #{} #{} #{} false))
 
 (def ^:dynamic *global-store*
      (atom (fresh-state {})))
 
-(defmacro with-fresh-store [choice-points & body]
+(defmacro with-fresh-store
+  "Creates a fresh binding for the global store and evaluates the body in this context." 
+  [choice-points & body]
   `(binding [*global-store* (atom (fresh-state ~choice-points))]
      ~@body))
 
 (defn reset-store! []
   (swap! *global-store* (constantly (fresh-state {}))))
 
-(defmacro update-in-store! [[& keys] update-fn & args]
+(defmacro update-in-store!
+  "Syntax like update-in, but updates the global store as a side effect.
+The global store should not be accessed directly, but only through this and
+the related macros assoc-in-store! and fetch-store. This way the representation
+of the global store could be changed with minimum effort."
+  [[& keys] update-fn & args]
   `(swap! ~'*global-store*
 	  update-in ~(vec keys) ~update-fn ~@args))
 
-(defmacro assoc-in-store! [[& keys] new-val]
+(defmacro assoc-in-store!
+  "Assoc-in for the global store of choice points. See also update-in-store!."
+  [[& keys] new-val]
   `(swap! ~'*global-store*
 	  assoc-in ~(vec keys) ~new-val))
 
-(defmacro fetch-store [& keys]
-  `(-> (deref ~'*global-store*) ~@keys))
+(defmacro fetch-store
+  "Macro for reading from the global store. The syntax resembles the chaining macro ->, i.e.
+each key-form gets an automatic first argument inserted."
+  [& key-forms]
+  `(-> (deref ~'*global-store*) ~@key-forms))
 
 ;;; choice points are maps with the following keys:
 ;;; name type recomputed recreate body dependents depends-on
@@ -72,7 +88,9 @@ can be extended by user defined distributions."}
 
 (def no-value ::unbound)
 
-(defn make-choice-point [name type whole body]
+(defn make-choice-point
+  "Create a new choice point with an unbound value and no dependencies."
+  [name type whole body]
   {:name name :type type :recomputed no-value
    :whole whole :body body
    :dependents #{} :depends-on #{}})
@@ -85,7 +103,9 @@ can be extended by user defined distributions."}
 
 (def ^:dynamic *call-stack* (list))
 
-(defn current-caller []
+(defn current-caller
+  "Returns the name of the choice point which is currently active or nil if no caller is active."
+  []
   (when (seq *call-stack*)
     (first *call-stack*)))
 
@@ -107,7 +127,9 @@ can be extended by user defined distributions."}
 ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn update-dependencies [cp-name]
+(defn update-dependencies
+  "Registers a new dependency between the choice point with the given name and the current caller."
+  [cp-name]
   (let [caller-name (current-caller)]
     (when caller-name
       (update-in-store! [:choice-points caller-name :depends-on]
@@ -115,7 +137,10 @@ can be extended by user defined distributions."}
       (update-in-store! [:choice-points cp-name :dependents]
 			conj caller-name))))
 
-(defn retract-dependent [cp-name dependent-name]
+(defn retract-dependent
+  "Register that the choice point cp-name no longer depends on dependent-name.
+If cp-name has no dependents left afterwards it is tagged for possible removal."
+  [cp-name dependent-name]
   (assert (contains? (fetch-store :choice-points (get cp-name) :dependents) dependent-name))
   (update-in-store! [:choice-points cp-name :dependents]
 		    disj dependent-name)
@@ -123,7 +148,10 @@ can be extended by user defined distributions."}
     (update-in-store! [:possibly-removed]
 		      conj cp-name)))
 
-(defn recompute-value [cp]
+(defn recompute-value
+  "Recompute the value of the given choice point. Updates the dependencies for the new
+value and registers the choice point as recomputed."
+  [cp]
   (let [name (:name cp)]
     (update-in-store! [:recomputed] conj name)
     (within name
@@ -142,10 +170,18 @@ can be extended by user defined distributions."}
 ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn make-det-cp [name whole body]
+(defn make-det-cp
+  "Create a new determinstic choice point."
+  [name whole body]
   (make-choice-point name ::deterministic whole body))
 
-(defn det-cp-fn [name whole-fn body-fn]
+(defn det-cp-fn
+  "This function gets called if a determinstic choice point is evaluated.
+When the choice point is not already in the global store it is initialized,
+its value is computed and the new choice point is returned.
+Otherwise it is simply fetched from the store.
+This function should not be called directly, but only in the context of det-cp."
+  [name whole-fn body-fn]
   (if (contains? (fetch-store :choice-points) name)
     ((fetch-store :choice-points) name)
     (let [det-cp (make-det-cp name whole-fn body-fn)]
@@ -156,7 +192,9 @@ can be extended by user defined distributions."}
       (recompute-value det-cp)
       (fetch-store :choice-points (get name)))))
   
-(defmacro det-cp [tag & body]
+(defmacro det-cp
+  "Establishes a deterministic choice point with the given name tag for the code in the body."
+  [tag & body]
   `(let [addr# *addr*
 	 name# (make-addr ~tag)
 	 body-fn# (fn [] ~@body)
@@ -170,6 +208,8 @@ can be extended by user defined distributions."}
 (defmulti gv :type)
 
 (defmethod gv ::deterministic
+  ;; Accesses the value of a deterministic choice point.
+  ;; Takes care of dependencies and creates the choice point if necessary.
   [det-cp]
   (let [name (:name det-cp)]
     (if (contains? (fetch-store :choice-points) name)
@@ -185,27 +225,41 @@ can be extended by user defined distributions."}
 ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn sample [prob-cp]
+(defn sample
+  "Sample a new value for prob-cp."
+  [prob-cp]
   (apply (:sampler prob-cp) (:recomputed prob-cp)))
 
-(defn calc-log-lik [prob-cp x]
+(defn calc-log-lik
+  "Calculate the probability of x given the current parameters of prob-cp."
+  [prob-cp x]
   (apply (:calc-log-lik prob-cp) x (:recomputed prob-cp)))
 
-(defn propose [prob-cp old-x]
+(defn propose
+  "Propose a new value new-x for prob-cp given that the current value is old-x.
+Returns three values [new-x q(new-x | old-x) q(old-x | new-x)] where q(.|.) denotes the
+proposal distribution."
+  [prob-cp old-x]
   (apply (:proposer prob-cp) old-x (:recomputed prob-cp)))
 
-(defn make-prob-cp [name whole body sampler calc-log-lik proposer]
+(defn make-prob-cp
+  "Creates a new probabilistic choice point."
+  [name whole body sampler calc-log-lik proposer]
   (merge (make-choice-point name ::probabilistic whole body)
 	 {:value no-value :log-lik 0 :sampler sampler :calc-log-lik calc-log-lik
 	  :proposer proposer :conditioned? false}))
 
-(defn update-log-lik [prob-cp-name]
+(defn update-log-lik
+  "Update the probability for the given probabilistic choice point."
+  [prob-cp-name]
   (let [prob-cp (fetch-store :choice-points (get prob-cp-name))]
     (assoc-in-store!
 	   [:choice-points prob-cp-name :log-lik]
 	   (calc-log-lik prob-cp (:value prob-cp)))))
 
-(defn prob-cp-fn [name whole-fn body-fn dist]
+(defn prob-cp-fn
+  "As det-cp-fn, but for probabilistic choice points."
+  [name whole-fn body-fn dist]
   (if (contains? (fetch-store :choice-points) name)
     ((fetch-store :choice-points) name)
     (let [prob-cp (make-prob-cp name whole-fn body-fn
@@ -223,7 +277,9 @@ can be extended by user defined distributions."}
 	(update-log-lik name)
 	(fetch-store :choice-points (get name))))))
 
-(defn create-dist-map [params dist-spec]
+(defn create-dist-map
+  "Helper functions for def-prob-cp."
+  [params dist-spec]
   (when-not (vector? params)
     (error "Provided parameters " params " are not a vector."))
   (let [keys #{:sampler :calc-log-lik :proposer}
@@ -269,6 +325,7 @@ for an example."
 	 (prob-cp-fn ~'tag-name# @~'whole-fn# ~'body-fn# ~'~dist-map)))))
 
 (defmethod gv ::probabilistic
+  ;; Accesses the value of a probabilistic choice point
   [prob-cp]
   (let [name (:name prob-cp)]
     (if (contains? (fetch-store :choice-points) name)
@@ -286,7 +343,9 @@ for an example."
 
 ;;; Traces failures
 
-(defn trace-failure []
+(defn trace-failure
+  "Tags the current trace as failed. Used to implement rejection sampling."
+  []
   (assoc-in-store! [:failed?] true))
 
 (defn trace-failed? []
@@ -294,7 +353,9 @@ for an example."
 
 ;;; Sampling routines
 
-(defn find-valid-trace [prob-chunk]
+(defn find-valid-trace
+  "Returns a valid trace for the probabilistic program given as a no-arg function prob-chunk."
+  [prob-chunk]
   (let [result (with-fresh-store {}
 		 (let [cp (prob-chunk)]
 		   (when-not (trace-failed?)
@@ -303,14 +364,18 @@ for an example."
       result
       (recur prob-chunk))))
 
-(defn cp-value [cp choice-points]
+(defn cp-value
+  "Returns the value of the choice point cp within the trace choice points."
+  [cp choice-points]
   (if (= (:type cp) ::deterministic)
     (:recomputed (get choice-points (:name cp)))
     (:value (get choice-points (:name cp)))))
 
 (defn monte-carlo-sampling
-  "Simple Monte-Carlo sampling scheme which simply runs the probabilistic program
-num-samples many times. Returns a lazy sequence of the obtained outcomes."
+  "Simple Monte-Carlo sampling scheme which runs the probabilistic program
+num-samples many times. Returns a lazy sequence of the obtained outcomes.
+Rejections are not included in the output, so it may take a long time if the
+rejection rate is high."
   [num-samples prob-chunk]
   (repeatedly num-samples
 	      (fn [] (let [[cp choice-points] (find-valid-trace prob-chunk)]
@@ -318,33 +383,47 @@ num-samples many times. Returns a lazy sequence of the obtained outcomes."
 
 ;;; utility functions for sampling
 
-(defn total-log-lik [cp-names choice-points]
-  (reduce + (map (fn [cp-name]
-		   (let [cp (choice-points cp-name)]
-		     (if (= (:type cp) ::probabilistic)
-		       (:log-lik cp)
-		       0)))
-		 cp-names)))
+(defn total-log-lik
+  "Returns the total sum of the log. probabilities of all requested choice points
+in the given trace.
+Choice points not in the trace are allowed and contribute zero log. probability."
+  [cp-names choice-points]
+  (reduce + 0 (map (fn [cp-name]
+		     (let [cp (choice-points cp-name)]
+		       (case (:type cp)
+			 ::probabilistic (:log-lik cp)
+			 ::deterministic 0
+			 0)))
+		   cp-names)))
 
-(defn remove-uncalled-choices []
-  (loop [candidate-names (fetch-store :possibly-removed)
+(defn remove-uncalled-choices
+  "Remove all choice points from the global store which have not been called.
+Starts from the choice points registered for possible removal and recursively
+retracts further dependents.
+Returns a set of the names of the removed choice points."
+  []
+  (loop [candidate-names (seq (fetch-store :possibly-removed))
 	 result []]
     (if (empty? candidate-names)
-      result
+      (set result)
       (let [candidate (fetch-store :choice-points (get (first candidate-names)))]
 	(if (empty? (:dependents candidate))
-	  (do (update-in-store! [:choice-points]
-				dissoc (:name candidate))
-	      (doseq [cp-name (:depends-on candidate)]
-		(retract-dependent cp-name (:name candidate)))
-	      (recur (concat (rest candidate-names)
-			     (:depends-on candidate))
-		     (conj result candidate)))
+	  (let [candidate-name (:name candidate)]
+	    (update-in-store! [:choice-points]
+			      dissoc candidate-name)
+	    (doseq [cp-name (:depends-on candidate)]
+	      (retract-dependent cp-name candidate-name))
+	    (recur (concat (rest candidate-names)
+			   (:depends-on candidate))
+		   (conj result candidate-name)))
 	  (recur (rest candidate-names) result))))))
 
 ;; Version using depth-first traversal to obtain topological ordering
 ;; of all choice points which have to updated if cp-name is changed
-(defn ordered-dependencies [cp-name choice-points]
+(defn ordered-dependencies
+  "Return all direct and indirect dependents of cp-name in an order suitable for updating, i.e.
+each choice point occurs before any of its dependents in this sequence (topologically sorted)."
+  [cp-name choice-points]
   (let [visited (atom #{})
 	ordered-deps (atom [])
 	dfs-path (atom #{})
@@ -367,7 +446,10 @@ num-samples many times. Returns a lazy sequence of the obtained outcomes."
       (dfs-traverse cp-name true)
       @ordered-deps)))
 
-(defn prob-choice-dist [choice-points]
+(defn prob-choice-dist
+  "Return a probability distribution for randomly choosing a choice point from the given trace.
+Implements the heuristic to prefer choice points with many dependents."
+  [choice-points]
   (letfn [(prob-choice? [cp]
 	    (and (= (:type cp) ::probabilistic)
 		 (not (:conditioned? cp))))]
@@ -378,7 +460,9 @@ num-samples many times. Returns a lazy sequence of the obtained outcomes."
 	     [name
 	      (Math/sqrt (count (ordered-dependencies name choice-points)))])))))
 
-(defn propagate-change-to [cp-names]
+(defn propagate-change-to
+  "Propagate a change by recomputing all the given choice points in order."
+  [cp-names]
   (doseq [dep-cp-name cp-names]
     (let [dep-cp (fetch-store :choice-points (get dep-cp-name))]
       (recompute-value dep-cp)
@@ -409,35 +493,32 @@ num-samples many times. Returns a lazy sequence of the obtained outcomes."
 			(println "Aha " (str [(fetch-store :recomputed) (set change-set) (fetch-store :newly-created)])))
 	      removed-cps (remove-uncalled-choices)
 	      ;; _ (do (println :CLEAN) (doseq [cp (vals (fetch-store :choice-points))] (println (probabilistic-clojure.embedded.tests/cp-str cp))))
-	      _ (assert (empty? (clojure.set/intersection (set (map :name removed-cps)) (fetch-store :newly-created))))
+	      _ (assert (empty? (clojure.set/intersection removed-cps (fetch-store :newly-created))))
 	      _ (let [new (set (keys (fetch-store :choice-points)))
-		      old (set (keys choice-points))
-		      rem (set (map :name removed-cps))]
+		      old (set (keys choice-points))]
 		  (assert (and (= new (difference (union old (fetch-store :newly-created))
-						  rem))
-			       (= old (difference (union new rem) (fetch-store :newly-created))))
-			  [old (fetch-store :newly-created) rem new]))
+						  removed-cps))
+			       (= old (difference (union new removed-cps) (fetch-store :newly-created))))
+			  [old (fetch-store :newly-created) removed-cps new]))
 										
-	      trace-log-lik (total-log-lik (union (set change-set)
-						  (set (map :name removed-cps)))
+	      trace-log-lik (total-log-lik (union (set change-set) removed-cps)
 					   ;; (keys choice-points)
 					   ;; (difference (fetch-store :recomputed) (fetch-store :newly-created))
 					   choice-points)
 	      prop-trace-log-lik (total-log-lik ;; (keys (fetch-store :choice-points))
-				  (difference (fetch-store :recomputed)
-					      (set (map :name removed-cps)))
+				  (difference (fetch-store :recomputed) removed-cps)
 				  (fetch-store :choice-points))
 	      
 	      fwd-trace-log-lik (total-log-lik (fetch-store :newly-created) (fetch-store :choice-points))
-	      bwd-trace-log-lik (total-log-lik (map :name removed-cps) choice-points)
+	      bwd-trace-log-lik (total-log-lik removed-cps choice-points)
 	      ;; prop-trace-log-lik (total-log-lik (difference
 	      ;; 					 ;; TODO: What about reweighting of reused choice-points???
 	      ;; 					 ;; (union (set change-set) (-> @*global-store* :newly-created))
 	      ;; 					 (fetch-store :recomputed))
-	      ;; 					 ;; (set (map :name removed-cps)))
+	      ;; 					 ;; removed-cps
 	      ;; 					(fetch-store :choice-points))
 	      prop-prob-choices (prob-choice-dist (fetch-store :choice-points))]
-	  ;; (when-not (empty? (clojure.set/intersection (fetch-store :recomputed) (set (map :name removed-cps))))
+	  ;; (when-not (empty? (clojure.set/intersection (fetch-store :recomputed) removed-cps))
 	  ;;   (print "."))
 	  ;; (when-let [it (seq removed-cps)] (println "Removed: " (pr-str (map :name it)) " (" (count it) ")"))
 	  ;; (when-let [it (seq (fetch-store :newly-created))] (println  "Created: " it " (" (count it) ")"))
@@ -493,7 +574,7 @@ num-samples many times. Returns a lazy sequence of the obtained outcomes."
 		       (pr-str (map :name (fetch-store :newly-created)))))
 	      (when-not (empty? removed-cps)
 		(error "Choice points deleted during fixed sampling: "
-		       (pr-str (map :name removed-cps)))))
+		       (pr-str removed-cps))))
 	    (let [prop-trace-log-lik (total-log-lik (fetch-store :recomputed)
 						    (fetch-store :choice-points))]
 	      (if (< (Math/log (rand))
