@@ -413,18 +413,23 @@ num-samples many times. Returns a lazy sequence of the obtained outcomes."
 	      _ (let [new (set (keys (fetch-store :choice-points)))
 		      old (set (keys choice-points))
 		      rem (set (map :name removed-cps))]
-		  (assert (= new (difference (union old (fetch-store :newly-created))
-					     rem))
+		  (assert (and (= new (difference (union old (fetch-store :newly-created))
+						  rem))
+			       (= old (difference (union new rem) (fetch-store :newly-created))))
 			  [old (fetch-store :newly-created) rem new]))
 										
-	      trace-log-lik (total-log-lik change-set ;; (difference (fetch-store :recomputed) (fetch-store :newly-created))
+	      trace-log-lik (total-log-lik (union (set change-set)
+						  (set (map :name removed-cps)))
+					   ;; (keys choice-points)
+					   ;; (difference (fetch-store :recomputed) (fetch-store :newly-created))
 					   choice-points)
-	      prop-trace-log-lik (total-log-lik (difference (fetch-store :recomputed)
-							    (set (map :name removed-cps)))
-						(fetch-store :choice-points))
+	      prop-trace-log-lik (total-log-lik ;; (keys (fetch-store :choice-points))
+				  (difference (fetch-store :recomputed)
+					      (set (map :name removed-cps)))
+				  (fetch-store :choice-points))
 	      
 	      fwd-trace-log-lik (total-log-lik (fetch-store :newly-created) (fetch-store :choice-points))
-	      bwd-trace-log-lik 0 ;; (total-log-lik (map :name removed-cps) choice-points)
+	      bwd-trace-log-lik (total-log-lik (map :name removed-cps) choice-points)
 	      ;; prop-trace-log-lik (total-log-lik (difference
 	      ;; 					 ;; TODO: What about reweighting of reused choice-points???
 	      ;; 					 ;; (union (set change-set) (-> @*global-store* :newly-created))
