@@ -205,7 +205,10 @@ This function should not be called directly, but only in the context of det-cp."
 		(det-cp-fn name# @whole-fn# body-fn#))))
      (det-cp-fn name# @whole-fn# body-fn#)))
 
-(defmulti gv :type)
+(defmulti gv
+  "Accesses the value of a choice point. When used in the body of another choice
+point this creates a dependency between those choice points."
+  :type)
 
 (defmethod gv ::deterministic
   ;; Accesses the value of a deterministic choice point.
