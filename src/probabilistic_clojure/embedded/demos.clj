@@ -82,23 +82,36 @@
 
 (def data (take 42 (generate-data)))
 
+(defn indexed [coll]
+  (map vector (iterate inc 0) coll)) 
+
 (defn mixture [comp-labels data]
   (let [comp-weights (dirichlet-cp :weights (for [_ comp-labels] 10.0))
 	comp-mus (zipmap comp-labels
 			 (for [label comp-labels] (gaussian-cp [:mu label] 0.0 10.0)))]
-    (loop [points data
-	   idx 0]
-      (when (seq points)
-	(let [comp (discrete-cp [:comp idx] (zipmap comp-labels (gv comp-weights)))]
-	  ;;     mu-comp (det-cp [:mu-comp idx] (gv (get comp-mus (gv comp))))]
-	  ;; (cond-data (gaussian-cp [:mu idx] (gv mu-comp) 1.0) (first points))
-	  (cond-data (gaussian-cp [:mu idx] (gv (get comp-mus (gv comp))) 1.0) (first points))
-	  (recur (rest points)
-		 (inc idx)))))
+    (doseq [[idx point] (indexed data)]
+      (let [comp (discrete-cp [:comp idx] (zipmap comp-labels (gv comp-weights)))]
+	;;     mu-comp (det-cp [:mu-comp idx] (gv (get comp-mus (gv comp))))]
+	;; (cond-data (gaussian-cp [:mu idx] (gv mu-comp) 1.0) point)
+	(cond-data (gaussian-cp [:mu idx] (gv (get comp-mus (gv comp))) 1.0) point)))
     (det-cp :mixture
       [(into {} (for [[comp mu] comp-mus] [comp (gv mu)]))
        (gv comp-weights)])))
 
+(defn mixture-memo [comp-labels data]
+  (let [comp-weights (dirichlet-cp :weights (for [_ comp-labels] 10.0))
+	means
+	(det-cp :assignment
+		(doall
+		 (for [[idx point] (indexed data)]
+		   (let [comp (discrete-cp [:comp idx] (zipmap comp-labels (gv comp-weights)))
+			 comp-mu (memo [:mu idx] (gaussian-cp :mu 0.0 10.0) (gv comp))]
+		     (cond-data (gaussian-cp [:obs idx] (gv comp-mu) 1.0) point)
+		     [(gv comp) (gv comp-mu)]))))]
+    (det-cp :mixture
+      [(into {} (distinct (gv means)))
+       (gv comp-weights)])))
+       
 (defn transpose
   "Transpose a list of lists, i.e. (transpose [[1 2] [3 4] [5 6]]) = ((1 3 5) (2 4 6))"
   [lls]
