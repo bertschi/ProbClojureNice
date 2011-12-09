@@ -48,7 +48,7 @@ prob and alias used by the alias method."
 		  (range n))
 
 	prob  (make-array Double n)
-	alias (make-array Integer n)]
+	alias (make-array Long n)]
 
     (loop [p p
 	   small small

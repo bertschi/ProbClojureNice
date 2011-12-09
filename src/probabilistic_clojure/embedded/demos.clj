@@ -24,7 +24,7 @@
     ^{:author "Nils Bertschinger"
       :doc "Part of probabilistic-clojure.embedded. Collection of demo programs."}
   probabilistic-clojure.embedded.demos
-  (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure cond-data sample-traces)]
+  (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure cond-data metropolis-hastings-sampling)]
 	[probabilistic-clojure.utils.sampling :only (sample-from normalize density)]
 	[probabilistic-clojure.embedded.choice-points
 	 :only (flip-cp gaussian-cp dirichlet-cp log-pdf-dirichlet discrete-cp log-pdf-discrete dirichlet-process)]
@@ -67,7 +67,7 @@
 
 (defn run-bayes-net [model]
   (density
-   (take 7500 (drop 500 (sample-traces model)))))
+   (take 7500 (drop 500 (metropolis-hastings-sampling model)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -106,7 +106,7 @@
 
 (defn test-mixture [comp-labels model]
   (let [data-plot (histogram data :title "Dataset" :nbins 50 :density true)
-	samples  (take 200 (drop 7500 (sample-traces (fn [] (model comp-labels data)))))
+	samples  (take 200 (drop 7500 (metropolis-hastings-sampling (fn [] (model comp-labels data)))))
 	comp-mus (map first samples)
 	comp-weights (map second samples)]
     (let [xs (range -10 10 0.01)
@@ -138,15 +138,12 @@
 		       mu (gv mu-comp)
 		       mu-count (get comp-mus mu 0)
 		       comp-mus (assoc comp-mus mu (inc mu-count))]
-		   ;; (println (inc idx) ": " mu)
 		   [(count comp-mus) comp-mus]))))
       comps)))
 
 (defn test-DP [alpha n]
-  (let [res (sample-traces (fn [] (mixture-DP alpha data)))]
+  (let [res (metropolis-hastings-sampling (fn [] (mixture-DP alpha data)))]
     (loop [x res, i 0]
-      (when (not (> i n))
-	(when (= (mod i 2500) 0)
-	  (print (first x)))
+      (when-not (> i n)
 	(recur (rest x) (inc i))))))
 

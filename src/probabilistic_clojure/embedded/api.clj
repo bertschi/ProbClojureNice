@@ -25,8 +25,8 @@ the probabilistic program.
 The system allows to condition and memoize probabilistic choice points and
 can be extended by user defined distributions."}
   probabilistic-clojure.embedded.api
-  (:use [clojure.set :only (union difference)])
-  (:use [probabilistic-clojure.utils.sampling :only (sample-from normalize)]
+  (:use [clojure.set :only (union difference intersection)])
+  (:use [probabilistic-clojure.utils.sampling :only (sample-from normalize random-selection random-selection-alias)]
 	[probabilistic-clojure.utils.stuff :only (ensure-list error)]))
 
 (in-ns 'probabilistic-clojure.embedded.api)
@@ -375,14 +375,13 @@ for an example."
     (:value (get choice-points (:name cp)))))
 
 (defn monte-carlo-sampling
-  "Simple Monte-Carlo sampling scheme which runs the probabilistic program
-num-samples many times. Returns a lazy sequence of the obtained outcomes.
+  "Simple Monte-Carlo sampling scheme which runs the whole probabilistic program
+over and over again. Returns a lazy sequence of the obtained outcomes.
 Rejections are not included in the output, so it may take a long time if the
 rejection rate is high."
-  [num-samples prob-chunk]
-  (repeatedly num-samples
-	      (fn [] (let [[cp choice-points] (find-valid-trace prob-chunk)]
-				(cp-value cp choice-points)))))
+  [prob-chunk]
+  (repeatedly (fn [] (let [[cp choice-points] (find-valid-trace prob-chunk)]
+		       (cp-value cp choice-points)))))
 
 ;;; utility functions for sampling
 
@@ -574,7 +573,7 @@ Implements the heuristic to prefer choice points with many dependents."
 	(do (let [removed-cps (remove-uncalled-choices)]
 	      (when-not (empty? (fetch-store :newly-created))
 		(error "New choice points created during fixed sampling: "
-		       (pr-str (map :name (fetch-store :newly-created)))))
+		       (pr-str (fetch-store :newly-created))))
 	      (when-not (empty? removed-cps)
 		(error "Choice points deleted during fixed sampling: "
 		       (pr-str removed-cps))))
@@ -640,3 +639,111 @@ Implements the heuristic to prefer choice points with many dependents."
   `(det-cp ~tag
      (binding [*addr* (list ~@(rest cp-form) ~@memo-args)]
        (gv ~cp-form))))
+
+;;; Finally the Metropolis Hastings sampling
+;;; This combines the previous attempts for changing and fixed topologies.
+;;; In case the topology remains unchanged the more efficient method is used.
+
+;; Does not work so easily since for log. lik. computations we still need to track which
+;; choice points are active and which are not!!!
+;; (def ^:dynamic *remove-uncalled*
+;;      "Should uncalled choices be removed?"
+;;      true)
+     
+(defn metropolis-hastings-step [choice-points selected selection-dist]
+  (with-fresh-store choice-points
+    (let [selected-cp (choice-points selected)
+	  change-set (ordered-dependencies (:name selected-cp) choice-points)
+	  
+	  [prop-val fwd-log-lik bwd-log-lik]
+	  (propose selected-cp (:value selected-cp))]
+      ;; Propose a new value for the selected choice point and propagate change to dependents
+      (assoc-in-store! [:choice-points (:name selected-cp) :value]
+		       prop-val)
+      (propagate-change-to change-set)
+      
+      (if (trace-failed?)
+	[choice-points ::rejected true selection-dist]
+	(let [removed-cps (remove-uncalled-choices)
+	      same-topology (and (empty? (fetch-store :newly-created))
+				 (empty? removed-cps))
+	      ;; Here we have the following invariants:
+	      ;; * (assert (= (fetch-store :recomputed) (union (set change-set) (fetch-store :newly-created))))
+	      ;; * (assert (empty? (clojure.set/intersection removed-cps (fetch-store :newly-created))))
+	      ;; * (let [new (set (keys (fetch-store :choice-points)))
+	      ;; 	 old (set (keys choice-points))]
+	      ;;     (assert (and (= new (difference (union old (fetch-store :newly-created))
+	      ;;  				     removed-cps))
+	      ;; 		  (= old (difference (union new removed-cps) (fetch-store :newly-created))))))
+
+	      ;; Overall the recomputed and removed-cps were touched during the update
+	      ;; Thus, we have to calculate the total probability contributed to the old
+	      ;; as well as the new traces.
+	      touched-cps (union (fetch-store :recomputed) removed-cps)
+	      trace-log-lik (total-log-lik touched-cps choice-points)
+	      prop-trace-log-lik (total-log-lik touched-cps (fetch-store :choice-points))
+
+	      ;; The forward and backward probabilities now account for the newly-created
+	      ;; and removed choice points
+	      fwd-trace-log-lik (total-log-lik (fetch-store :newly-created) (fetch-store :choice-points))
+	      bwd-trace-log-lik (total-log-lik removed-cps choice-points)
+
+	      prop-selection-dist (if same-topology
+				    selection-dist
+				    (prob-choice-dist (fetch-store :choice-points)))]
+	  ;; Randomly accept the new proposal according to the Metropolis Hastings formula
+	  (if (< (Math/log (rand))
+		 (+ (- prop-trace-log-lik trace-log-lik)
+		    (- (Math/log (prop-selection-dist (:name selected-cp)))
+		       (Math/log (selection-dist (:name selected-cp))))
+		    (- bwd-trace-log-lik fwd-trace-log-lik)
+		    (- bwd-log-lik fwd-log-lik)))
+	    [(fetch-store :choice-points) ::accepted same-topology prop-selection-dist]
+	    [choice-points ::rejected true selection-dist]))))))
+
+(def ^:dynamic *info-steps*
+     "Display some status information every *info-steps* many samples"
+     500)
+
+(def ^:dynamic *selection-dist-steps*
+     "Force a refresh of the selection distribution after that many steps.
+Anytime the topology has changed it is recomputed anyways."
+     25000)
+
+(defn new-update-sequence [dist]
+  (random-selection-alias *selection-dist-steps* dist))
+
+(defn metropolis-hastings-sampling [prob-chunk]
+  (println "Trying to find a valid trace ...")
+  (let [[cp choice-points] (find-valid-trace prob-chunk)]
+    (println "Started sampling")
+    (letfn [(samples [choice-points idx num-accepted num-top-changed update-seq selection-dist]
+	      (lazy-seq
+	       (let [update-seq (or (seq update-seq)
+				    (new-update-sequence choice-points))
+		     val (cp-value cp choice-points)
+		     
+		     [next-choice-points status same-topology next-selection-dist]
+		     (metropolis-hastings-step choice-points (first update-seq) selection-dist)
+
+		     output-info (= (mod idx *info-steps*) 0)]
+		 (when output-info
+		   (println idx ": " val)
+		   (println "Log. lik.: " (total-log-lik (keys choice-points) choice-points))
+		   (println "Accepted " num-accepted " out of last " *info-steps* " samples.")
+		   (println "Topology changed on " num-top-changed " samples."))
+		 (cons val
+		       (samples next-choice-points
+				(inc idx)
+				(cond output-info 0
+				      (= status ::accepted) (inc num-accepted)
+				      :else num-accepted)
+				(cond output-info 0
+				      (not same-topology) (inc num-top-changed)
+				      :else num-top-changed)
+				(if same-topology
+				  (rest update-seq)
+				  (new-update-sequence next-selection-dist))
+				next-selection-dist)))))]
+      (let [selection-dist (prob-choice-dist choice-points)]
+	(samples choice-points 0 0 0 (new-update-sequence selection-dist) selection-dist)))))

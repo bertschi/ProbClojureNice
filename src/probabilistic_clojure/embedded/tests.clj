@@ -71,7 +71,7 @@
       (show-cps))))
 
 (defn test-bayes-net [bayes-net]
-  (density (monte-carlo-sampling 25000 bayes-net)))
+  (density (take 25000 (monte-carlo-sampling bayes-net))))
 
 (defn test-topsort []
   (with-fresh-store {}
