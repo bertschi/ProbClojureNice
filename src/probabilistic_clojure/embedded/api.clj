@@ -574,7 +574,7 @@ Anytime the topology has changed it is recomputed anyways."
     (letfn [(samples [choice-points idx num-accepted num-top-changed update-seq selection-dist]
 	      (lazy-seq
 	       (let [update-seq (or (seq update-seq)
-				    (new-update-sequence choice-points))
+				    (new-update-sequence (prob-choice-dist choice-points)))
 		     val (cp-value cp choice-points)
 		     
 		     [next-choice-points status same-topology next-selection-dist]
