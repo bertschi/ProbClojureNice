@@ -99,17 +99,14 @@
        (gv comp-weights)])))
 
 (defn mixture-memo [comp-labels data]
-  (let [comp-weights (dirichlet-cp :weights (for [_ comp-labels] 10.0))
-	means
-	(det-cp :assignment
-		(doall
-		 (for [[idx point] (indexed data)]
-		   (let [comp (discrete-cp [:comp idx] (zipmap comp-labels (gv comp-weights)))
-			 comp-mu (memo [:mu idx] (gaussian-cp :mu 0.0 10.0) (gv comp))]
-		     (cond-data (gaussian-cp [:obs idx] (gv comp-mu) 1.0) point)
-		     [(gv comp) (gv comp-mu)]))))]
+  (let [comp-weights (dirichlet-cp :weights (for [_ comp-labels] 10.0))]
+    (doseq [[idx point] (indexed data)]
+      (let [comp (discrete-cp [:comp idx] (zipmap comp-labels (gv comp-weights)))
+	    comp-mu (memo [:mu idx] (gaussian-cp :mu 0.0 10.0) (gv comp))]
+	(cond-data (gaussian-cp [:obs idx] (gv comp-mu) 1.0) point)))
     (det-cp :mixture
-      [(into {} (distinct (gv means)))
+      [(into {} (for [comp comp-labels]
+		  [comp (gv (memo [:mu comp] (gaussian-cp :mu 0.0 10.0) comp))]))
        (gv comp-weights)])))
        
 (defn transpose
