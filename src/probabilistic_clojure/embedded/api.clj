@@ -605,11 +605,15 @@ Implements the heuristic to prefer choice points with many dependents."
 Anytime the topology has changed it is recomputed anyways."
      25000)
 
+(def ^:dynamic *alias-sampling* true)
+
 (defn new-update-sequence [dist]
   (let [total (:total dist)
 	pdist (into {} (for [[name weight] (:weights dist)]
 			 [name (/ weight total)]))]
-    (random-selection-alias *selection-dist-steps* pdist)))
+    (if *alias-sampling*
+      (random-selection-alias *selection-dist-steps* pdist)
+      (random-selection *selection-dist-steps* pdist))))
 
 (defn metropolis-hastings-sampling [prob-chunk]
   (println "Trying to find a valid trace ...")
