@@ -579,8 +579,6 @@ Implements the heuristic to prefer choice points with many dependents."
 	      fwd-trace-log-lik (total-log-lik (fetch-store :newly-created) (fetch-store :choice-points))
 	      bwd-trace-log-lik (total-log-lik removed-cps choice-points)
 
-	      _ (let [prob-choices (filter #(prob-choice? (choice-points %)) (keys choice-points))]
-		  (assert (= (set prob-choices) (set (keys (:weights selection-dist))))))
 	      prop-selection-dist (if same-topology
 				    selection-dist
 				    ;; (prob-choice-dist (fetch-store :choice-points)))]
