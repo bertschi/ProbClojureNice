@@ -448,20 +448,6 @@ each choice point occurs before any of its dependents in this sequence (topologi
       (dfs-traverse cp-name true)
       @ordered-deps)))
 
-(defn prob-choice-dist
-  "Return a probability distribution for randomly choosing a choice point from the given trace.
-Implements the heuristic to prefer choice points with many dependents."
-  [choice-points]
-  (letfn [(prob-choice? [cp]
-	    (and (= (:type cp) ::probabilistic)
-		 (not (:conditioned? cp))))]
-    (normalize
-     (into {}
-	   (for [[name cp] choice-points
-		 :when (prob-choice? cp)]
-	     [name
-	      (Math/sqrt (count (ordered-dependencies name choice-points)))])))))
-
 (defn propagate-change-to
   "Propagate a change by recomputing all the given choice points in order."
   [cp-names]
@@ -503,7 +489,58 @@ Implements the heuristic to prefer choice points with many dependents."
 ;; (def ^:dynamic *remove-uncalled*
 ;;      "Should uncalled choices be removed?"
 ;;      true)
-     
+
+;; Idea for speedup: Use un-normalized selection distribution and do not recompute it
+;; completely, but just update the changed choice points 
+
+(defrecord UDist [weights total])
+
+(defn prob-choice?
+  "Returns true if cp is an un-conditioned probabilistic choice point."
+  [cp]
+  (and (= (:type cp) ::probabilistic)
+       (not (:conditioned? cp))))
+
+(defn cp-weight [cp-name choice-points]
+  (Math/sqrt (count (ordered-dependencies cp-name choice-points))))
+
+(defn prob-choice-dist
+  "Return an un-normalized distribution for randomly choosing a choice point from the given trace.
+Implements the heuristic to prefer choice points with many dependents."
+  [choice-points]
+  (let [weights (into {}
+		      (for [[name cp] choice-points
+			    :when (prob-choice? cp)]
+			[name (cp-weight name choice-points)]))]
+    (UDist. weights (reduce + (vals weights)))))
+
+(defn add-to-prob-choice-dist [dist cp-names choice-points]
+  (let [[new-weights new-total]
+	(reduce (fn [[weights total] cp-name]
+		  (let [cp (choice-points cp-name)]
+		    (if (prob-choice? cp)
+		      (let [w (cp-weight cp-name choice-points)]
+			(assert (not (contains? cp-name weights)))
+			[(merge weights {cp-name w}) (+ total w)])
+		      [weights total])))
+		[(:weights dist) (:total dist)]
+		cp-names)]
+    (UDist. new-weights new-total)))
+
+(defn remove-from-prob-choice-dist [dist cp-names]
+  (let [[new-weights new-total]
+	(reduce (fn [[weights total] cp-name]
+		  (if (contains? weights cp-name) ;; fails for non prob-choices
+		    (let [w (weights cp-name)]
+		      [(dissoc weights cp-name) (- total w)])
+		    [weights total]))
+		[(:weights dist) (:total dist)]
+		cp-names)]
+    (UDist. new-weights new-total)))
+
+(defn prob [dist cp-name]
+  (/ ((:weights dist) cp-name) (:total dist)))
+
 (defn metropolis-hastings-step [choice-points selected selection-dist]
   (with-fresh-store choice-points
     (let [selected-cp (choice-points selected)
@@ -542,14 +579,20 @@ Implements the heuristic to prefer choice points with many dependents."
 	      fwd-trace-log-lik (total-log-lik (fetch-store :newly-created) (fetch-store :choice-points))
 	      bwd-trace-log-lik (total-log-lik removed-cps choice-points)
 
+	      _ (let [prob-choices (filter #(prob-choice? (choice-points %)) (keys choice-points))]
+		  (assert (= (set prob-choices) (set (keys (:weights selection-dist))))))
 	      prop-selection-dist (if same-topology
 				    selection-dist
-				    (prob-choice-dist (fetch-store :choice-points)))]
+				    ;; (prob-choice-dist (fetch-store :choice-points)))]
+				    (-> selection-dist
+				    	(add-to-prob-choice-dist (fetch-store :newly-created)
+				    				 (fetch-store :choice-points))
+				    	(remove-from-prob-choice-dist removed-cps)))]
 	  ;; Randomly accept the new proposal according to the Metropolis Hastings formula
 	  (if (< (Math/log (rand))
 		 (+ (- prop-trace-log-lik trace-log-lik)
-		    (- (Math/log (prop-selection-dist (:name selected-cp)))
-		       (Math/log (selection-dist (:name selected-cp))))
+		    (- (Math/log (prob prop-selection-dist (:name selected-cp)))
+		       (Math/log (prob selection-dist (:name selected-cp))))
 		    (- bwd-trace-log-lik fwd-trace-log-lik)
 		    (- bwd-log-lik fwd-log-lik)))
 	    [(fetch-store :choice-points) ::accepted same-topology prop-selection-dist]
@@ -565,7 +608,10 @@ Anytime the topology has changed it is recomputed anyways."
      25000)
 
 (defn new-update-sequence [dist]
-  (random-selection-alias *selection-dist-steps* dist))
+  (let [total (:total dist)
+	pdist (into {} (for [[name weight] (:weights dist)]
+			 [name (/ weight total)]))]
+    (random-selection-alias *selection-dist-steps* pdist)))
 
 (defn metropolis-hastings-sampling [prob-chunk]
   (println "Trying to find a valid trace ...")

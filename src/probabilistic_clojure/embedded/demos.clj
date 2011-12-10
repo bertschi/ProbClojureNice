@@ -24,7 +24,7 @@
     ^{:author "Nils Bertschinger"
       :doc "Part of probabilistic-clojure.embedded. Collection of demo programs."}
   probabilistic-clojure.embedded.demos
-  (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure cond-data metropolis-hastings-sampling)]
+  (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure cond-data memo metropolis-hastings-sampling)]
 	[probabilistic-clojure.utils.sampling :only (sample-from normalize density)]
 	[probabilistic-clojure.embedded.choice-points
 	 :only (flip-cp gaussian-cp dirichlet-cp log-pdf-dirichlet discrete-cp log-pdf-discrete dirichlet-process)]
