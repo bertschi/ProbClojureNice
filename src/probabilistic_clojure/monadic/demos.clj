@@ -100,7 +100,7 @@ graphical output."}
 			  (for [a alphas] (* 18 a)))]
     (make-choice-point "DIRICHLET" [alphas]
 		       (fn [alphas] (first (sample-dirichlet 2 alphas)))
-		       (fn [ps alphas] (pdf-dirichlet ps alphas))
+		       (fn [ps alphas] (Math/log (pdf-dirichlet ps alphas)))
 		       (fn [ps alphas] (first (sample-dirichlet 2 (proposal-alphas ps))))
 		       (fn [new-ps old-ps alphas]
 			 (Math/log (pdf-dirichlet new-ps (proposal-alphas old-ps)))))))
