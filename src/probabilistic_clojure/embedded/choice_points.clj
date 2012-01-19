@@ -93,11 +93,13 @@ of probabilistic choice points."}
     (- (reduce + (map (fn [p a] (* (- a 1) (Math/log p))) ps alphas))
        norm)))
 
+(def ^:dynamic *dirichlet-proposal-factor* 42)
+
 (def-prob-cp dirichlet-cp [alphas]
   :sampler [] (first (sample-dirichlet 2 alphas))
   :calc-log-lik [ps] (log-pdf-dirichlet ps alphas)
   :proposer [old-ps] (letfn [(proposal-alphas [alphas]
-			       (for [a alphas] (* 8 a)))]
+			       (for [a alphas] (* *dirichlet-proposal-factor* a)))]
 		       (let [new-ps (first (sample-dirichlet 2 (proposal-alphas old-ps)))]
 			 [new-ps
 			  (log-pdf-dirichlet new-ps (proposal-alphas old-ps))

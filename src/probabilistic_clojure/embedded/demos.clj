@@ -27,7 +27,8 @@
   (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure cond-data memo metropolis-hastings-sampling)]
 	[probabilistic-clojure.utils.sampling :only (sample-from normalize density)]
 	[probabilistic-clojure.embedded.choice-points
-	 :only (flip-cp gaussian-cp dirichlet-cp log-pdf-dirichlet discrete-cp log-pdf-discrete dirichlet-process)]
+	 :only (flip-cp gaussian-cp dirichlet-cp log-pdf-dirichlet discrete-cp log-pdf-discrete dirichlet-process
+			*dirichlet-proposal-factor*)]
 
 	[incanter.core   :only (view)]
 	[incanter.charts :only (histogram add-lines xy-plot)]
