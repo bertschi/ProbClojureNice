@@ -28,7 +28,8 @@ of probabilistic choice points."}
   (:use [probabilistic-clojure.embedded.api :only (def-prob-cp det-cp gv memo)]
 	[probabilistic-clojure.utils.stuff :only (ensure-list error)]
 	[incanter.stats :only (sample-normal pdf-normal sample-dirichlet sample-beta pdf-beta)])
-  (:import cern.jet.stat.tdouble.Gamma))
+  (:import org.apache.commons.math.special.Gamma))
+  ;; (:import cern.jet.stat.tdouble.Gamma))
 
 (in-ns 'probabilistic-clojure.embedded.choice-points)
 
@@ -96,7 +97,7 @@ of probabilistic choice points."}
   :sampler [] (first (sample-dirichlet 2 alphas))
   :calc-log-lik [ps] (log-pdf-dirichlet ps alphas)
   :proposer [old-ps] (letfn [(proposal-alphas [alphas]
-			       (for [a alphas] (* 88 a)))]
+			       (for [a alphas] (* 8 a)))]
 		       (let [new-ps (first (sample-dirichlet 2 (proposal-alphas old-ps)))]
 			 [new-ps
 			  (log-pdf-dirichlet new-ps (proposal-alphas old-ps))
