@@ -453,20 +453,25 @@ Returns a set of the names of the removed choice points."
 
 (defn propagate-change-to
   "Propagate a change, starting with the given choice points."
-  [cp-names]
-  (when-let [cpns (seq cp-names)]
+  [cp-names update-count]
+  (if-let [cpns (seq cp-names)]
     (let [[cp-name & more-cps] cpns
-	  cp (fetch-store :choice-points (get cp-name))]
+	  cp (fetch-store :choice-points (get cp-name))
+	  old-val (:recomputed cp)]
+      ;; (println cp-name ": " (count cp-names)) (Thread/sleep 10)
       (recompute-value cp)
-      ;; (println "updating " cp-name) (Thread/sleep 50)
       (when (= (:type cp) ::probabilistic)
 	(update-log-lik (:name cp)))
-      (let [direct-deps (if (= (:type cp) ::deterministic) ; no propagation beyond prob. cp
-			  (:dependents cp)
-			  [])]
+      (let [direct-deps (if (or (= (:type cp) ::probabilistic)
+				(= old-val (fetch-store :choice-points
+							(get cp-name) :recomputed)))
+			  ;; no propagation beyond prob. and unchanged choice points
+			  []
+			  (:dependents cp))]
 	;; this implements breadth-first traversal and potentially re-registers
 	;; cp for update ... ensures valid data after the propagation completes
-	(propagate-change-to (concat more-cps (seq direct-deps)))))))
+	(recur (doall (concat more-cps (seq direct-deps))) (inc update-count))))
+    update-count))
   
 ;; (defn propagate-change-to
 ;;   "Propagate a change by recomputing all the given choice points in order."
@@ -493,7 +498,7 @@ Returns a set of the names of the removed choice points."
 	(assoc-in-store! [:choice-points name :conditioned?]
 			 true)
 	(update-log-lik name)
-	(propagate-change-to (:dependents prob-cp))
+	(propagate-change-to (:dependents prob-cp) 0)
 	cond-val))))
 
 (defmacro memo [tag cp-form & memo-args]
@@ -592,7 +597,10 @@ Implements the heuristic to prefer choice points with many dependents."
 	  (propose selected-cp (:value selected-cp))]
       ;; Propose a new value for the selected choice point and propagate change to dependents
       (set-proposed-val! (:name selected-cp) prop-val)
-      (propagate-change-to (:dependents selected-cp))
+      (let [updates (propagate-change-to (:dependents selected-cp) 0)]
+	;; (println "Proposed " (:name selected-cp) " for " updates " updates ("
+	;; 	 (count-all-dependents (:name selected-cp) choice-points) " dependents)"))
+	)
 	
       (if (trace-failed?)
 	[choice-points ::rejected true selection-dist]
