@@ -87,6 +87,8 @@ of probabilistic choice points."}
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn log-pdf-dirichlet [ps alphas]
+  (assert (= (count ps) (count alphas))
+	  "Dimension mismatch in log-pdf-dirichlet!")
   (let [log-gamma (fn [x] (Gamma/logGamma x))
 	norm (- (reduce + (map log-gamma alphas))
 		(log-gamma (reduce + alphas)))]

@@ -84,6 +84,38 @@
       (println (ordered-dependencies (:name a) (fetch-store :choice-points))))))
 
 
+(defn topsort-bug []
+  ;; Illustrates a bug resulting from update in topological order if order changes
+  ;; during the re-evaluation!!!
+  ;; TODO: Needs fix ... major rewrite necessary
+  (with-fresh-store {}
+    (let [c (atom 0)
+	  a (det-cp :a true)
+	  b (det-cp :b (if (gv a)
+			 :b-true
+			 (list :a-false (gv @c))))
+	  show-cps (fn []
+		     (doseq [[name cp] (:choice-points @*global-store*)]
+		       (println (cp-str cp))))
+	  set-value! (fn [cp val]
+		       (assoc-in-store! [:choice-points (:name cp) :recomputed] val))
+	  refresh (fn [] (swap! *global-store* (constantly
+						(fresh-state (:choice-points @*global-store*)))))]
+      ;; examples requires cyclic dependency ... so maybe cannot arise otherwise???
+      (swap! c (fn [_] (det-cp :c (if (gv a)
+				    (list :a-true (gv b))
+				    :c-false))))
+
+      (show-cps)
+      (refresh)    
+      (set-value! a false)
+      (propagate-change-to
+       ;; don't recompute a, we have set its value!
+       (rest (ordered-dependencies (:name a) (fetch-store :choice-points))))
+      ;; now we are inconsistent -> b still sees the old value of c!!!
+      (show-cps))))
+  
+
 (defn test-retracts-net
   "Somewhat involved example of a changing topology, to test dependency tracking and sampling."
   []
