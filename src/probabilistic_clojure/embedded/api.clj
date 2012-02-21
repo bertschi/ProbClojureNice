@@ -420,42 +420,62 @@ Returns a set of the names of the removed choice points."
 		   (conj result candidate-name)))
 	  (recur (rest candidate-names) result))))))
 
-;; Version using depth-first traversal to obtain topological ordering
-;; of all choice points which have to updated if cp-name is changed
-(defn ordered-dependencies
-  "Return all direct and indirect dependents of cp-name in an order suitable for updating, i.e.
-each choice point occurs before any of its dependents in this sequence (topologically sorted)."
-  [cp-name choice-points]
-  (let [visited (atom #{})
-	ordered-deps (atom [])
-	dfs-path (atom #{})
-	back-edge? (fn [cp-name] (@dfs-path cp-name))]
-    (letfn [(dfs-traverse [current-cp-name propagate?]
-	      (swap! visited  conj current-cp-name)
-	      (swap! dfs-path conj current-cp-name)
-	      (let [current-cp (choice-points current-cp-name)
-		    direct-deps (if (or propagate? (= (:type current-cp) ::deterministic))
-				  (:dependents current-cp)
-				  #{})]
-		(doseq [dep-cp-name direct-deps]
-		  (when (back-edge? dep-cp-name)
-		    (error "Cyclic dependencies between " current-cp-name
-			   " and " dep-cp-name " detected!"))
-		  (when-not (@visited dep-cp-name)
-		    (dfs-traverse dep-cp-name false)))
-		(swap! dfs-path disj current-cp-name)
-		(swap! ordered-deps (fn [deps] (cons current-cp-name deps)))))]
-      (dfs-traverse cp-name true)
-      @ordered-deps)))
+;; THIS DOES NOT WORK ... replaced by straight forward propagation
+;;                        with potential duplicate recomputations!
+
+;; ;; Version using depth-first traversal to obtain topological ordering
+;; ;; of all choice points which have to updated if cp-name is changed
+;; (defn ordered-dependencies
+;;   "Return all direct and indirect dependents of cp-name in an order suitable for updating, i.e.
+;; each choice point occurs before any of its dependents in this sequence (topologically sorted)."
+;;   [cp-name choice-points]
+;;   (let [visited (atom #{})
+;; 	ordered-deps (atom [])
+;; 	dfs-path (atom #{})
+;; 	back-edge? (fn [cp-name] (@dfs-path cp-name))]
+;;     (letfn [(dfs-traverse [current-cp-name propagate?]
+;; 	      (swap! visited  conj current-cp-name)
+;; 	      (swap! dfs-path conj current-cp-name)
+;; 	      (let [current-cp (choice-points current-cp-name)
+;; 		    direct-deps (if (or propagate? (= (:type current-cp) ::deterministic))
+;; 				  (:dependents current-cp)
+;; 				  #{})]
+;; 		(doseq [dep-cp-name direct-deps]
+;; 		  (when (back-edge? dep-cp-name)
+;; 		    (error "Cyclic dependencies between " current-cp-name
+;; 			   " and " dep-cp-name " detected!"))
+;; 		  (when-not (@visited dep-cp-name)
+;; 		    (dfs-traverse dep-cp-name false)))
+;; 		(swap! dfs-path disj current-cp-name)
+;; 		(swap! ordered-deps (fn [deps] (cons current-cp-name deps)))))]
+;;       (dfs-traverse cp-name true)
+;;       @ordered-deps)))
 
 (defn propagate-change-to
-  "Propagate a change by recomputing all the given choice points in order."
+  "Propagate a change, starting with the given choice points."
   [cp-names]
-  (doseq [dep-cp-name cp-names]
-    (let [dep-cp (fetch-store :choice-points (get dep-cp-name))]
-      (recompute-value dep-cp)
-      (when (= (:type dep-cp) ::probabilistic)
-	(update-log-lik (:name dep-cp))))))
+  (when-let [cpns (seq cp-names)]
+    (let [[cp-name & more-cps] cpns
+	  cp (fetch-store :choice-points (get cp-name))]
+      (recompute-value cp)
+      ;; (println "updating " cp-name)
+      (when (= (:type cp) ::probabilistic)
+	(update-log-lik (:name cp)))
+      (let [direct-deps (if (= (:type cp) ::deterministic) ; no propagation beyond prob. cp
+			  (:dependents cp)
+			  [])]
+	;; this implements breadth-first traversal and potentially re-registers
+	;; cp for update ... ensures valid data after the propagation completes
+	(propagate-change-to (concat more-cps (seq direct-deps)))))))
+  
+;; (defn propagate-change-to
+;;   "Propagate a change by recomputing all the given choice points in order."
+;;   [cp-names]
+;;   (doseq [dep-cp-name cp-names]
+;;     (let [dep-cp (fetch-store :choice-points (get dep-cp-name))]
+;;       (recompute-value dep-cp)
+;;       (when (= (:type dep-cp) ::probabilistic)
+;; 	(update-log-lik (:name dep-cp))))))
 
 ;;; Conditioning and memoization
 
@@ -472,7 +492,8 @@ each choice point occurs before any of its dependents in this sequence (topologi
 			 cond-val)
 	(assoc-in-store! [:choice-points name :conditioned?]
 			 true)
-	(propagate-change-to (ordered-dependencies name (fetch-store :choice-points)))
+	(update-log-lik name)
+	(propagate-change-to (:dependents prob-cp))
 	cond-val))))
 
 (defmacro memo [tag cp-form & memo-args]
@@ -501,8 +522,24 @@ each choice point occurs before any of its dependents in this sequence (topologi
   (and (= (:type cp) ::probabilistic)
        (not (:conditioned? cp))))
 
+(defn count-all-dependents
+  "Returns the number of all direct and indirect dependents of the given choice point."
+  [cp-name choice-points]
+  (let [visited (atom #{})
+	counter (atom 0)]
+    (letfn [(dfs-traverse [current-cp-name]
+	      (swap! visited  conj current-cp-name)
+	      (swap! counter inc)
+	      (let [current-cp (choice-points current-cp-name)
+		    direct-deps (:dependents current-cp)]
+		(doseq [dep-cp-name direct-deps]
+		  (when-not (@visited dep-cp-name)
+		    (dfs-traverse dep-cp-name)))))]
+      (dfs-traverse cp-name)
+      @counter)))
+
 (defn cp-weight [cp-name choice-points]
-  (Math/sqrt (count (ordered-dependencies cp-name choice-points))))
+  (Math/sqrt (count-all-dependents cp-name choice-points)))
 
 (defn prob-choice-dist
   "Return an un-normalized distribution for randomly choosing a choice point from the given trace.
@@ -544,22 +581,21 @@ Implements the heuristic to prefer choice points with many dependents."
 (defn metropolis-hastings-step [choice-points selected selection-dist]
   (with-fresh-store choice-points
     (let [selected-cp (choice-points selected)
-	  change-set (ordered-dependencies (:name selected-cp) choice-points)
 	  
 	  [prop-val fwd-log-lik bwd-log-lik]
 	  (propose selected-cp (:value selected-cp))]
       ;; Propose a new value for the selected choice point and propagate change to dependents
       (assoc-in-store! [:choice-points (:name selected-cp) :value]
 		       prop-val)
-      (propagate-change-to change-set)
-      
+      (update-log-lik (:name selected-cp))
+      (propagate-change-to (:dependents selected-cp))
+	
       (if (trace-failed?)
 	[choice-points ::rejected true selection-dist]
 	(let [removed-cps (remove-uncalled-choices)
 	      same-topology (and (empty? (fetch-store :newly-created))
 				 (empty? removed-cps))
 	      ;; Here we have the following invariants:
-	      ;; * (assert (= (fetch-store :recomputed) (union (set change-set) (fetch-store :newly-created))))
 	      ;; * (assert (empty? (clojure.set/intersection removed-cps (fetch-store :newly-created))))
 	      ;; * (let [new (set (keys (fetch-store :choice-points)))
 	      ;; 	 old (set (keys choice-points))]
