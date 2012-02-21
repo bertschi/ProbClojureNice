@@ -454,24 +454,26 @@ Returns a set of the names of the removed choice points."
 (defn propagate-change-to
   "Propagate a change, starting with the given choice points."
   [cp-names update-count]
-  (if-let [cpns (seq cp-names)]
-    (let [[cp-name & more-cps] cpns
-	  cp (fetch-store :choice-points (get cp-name))
-	  old-val (:recomputed cp)]
-      ;; (println cp-name ": " (count cp-names)) (Thread/sleep 10)
-      (recompute-value cp)
-      (when (= (:type cp) ::probabilistic)
-	(update-log-lik (:name cp)))
-      (let [direct-deps (if (or (= (:type cp) ::probabilistic)
-				(= old-val (fetch-store :choice-points
-							(get cp-name) :recomputed)))
-			  ;; no propagation beyond prob. and unchanged choice points
-			  []
-			  (:dependents cp))]
-	;; this implements breadth-first traversal and potentially re-registers
-	;; cp for update ... ensures valid data after the propagation completes
-	(recur (doall (concat more-cps (seq direct-deps))) (inc update-count))))
-    update-count))
+  (let [cpns (vec cp-names)]
+    (if (pos? (count cpns))
+      (let [cp-name (cpns 0)
+	    more-cps (subvec cpns 1)
+	    cp (fetch-store :choice-points (get cp-name))
+	    old-val (:recomputed cp)]
+	;; (println cp-name ": " (count cp-names)) (Thread/sleep 10)
+	(recompute-value cp)
+	(when (= (:type cp) ::probabilistic)
+	  (update-log-lik (:name cp)))
+	(let [direct-deps (if (or (= (:type cp) ::probabilistic)
+				  (= old-val (fetch-store :choice-points
+							  (get cp-name) :recomputed)))
+			    ;; no propagation beyond prob. and unchanged choice points
+			    []
+			    (vec (:dependents cp)))]
+	  ;; this implements breadth-first traversal and potentially re-registers
+	  ;; cp for update ... ensures valid data after the propagation completes
+	  (recur (reduce conj more-cps direct-deps) (inc update-count))))
+      update-count)))
   
 ;; (defn propagate-change-to
 ;;   "Propagate a change by recomputing all the given choice points in order."
