@@ -458,7 +458,7 @@ Returns a set of the names of the removed choice points."
     (let [[cp-name & more-cps] cpns
 	  cp (fetch-store :choice-points (get cp-name))]
       (recompute-value cp)
-      ;; (println "updating " cp-name)
+      ;; (println "updating " cp-name) (Thread/sleep 50)
       (when (= (:type cp) ::probabilistic)
 	(update-log-lik (:name cp)))
       (let [direct-deps (if (= (:type cp) ::deterministic) ; no propagation beyond prob. cp
@@ -578,6 +578,12 @@ Implements the heuristic to prefer choice points with many dependents."
 (defn prob [dist cp-name]
   (/ ((:weights dist) cp-name) (:total dist)))
 
+(defn set-proposed-val! [cp-name prop-val]
+  (assoc-in-store! [:choice-points cp-name :value]
+		   prop-val)
+  (update-in-store! [:recomputed] conj cp-name)
+  (update-log-lik cp-name))
+
 (defn metropolis-hastings-step [choice-points selected selection-dist]
   (with-fresh-store choice-points
     (let [selected-cp (choice-points selected)
@@ -585,9 +591,7 @@ Implements the heuristic to prefer choice points with many dependents."
 	  [prop-val fwd-log-lik bwd-log-lik]
 	  (propose selected-cp (:value selected-cp))]
       ;; Propose a new value for the selected choice point and propagate change to dependents
-      (assoc-in-store! [:choice-points (:name selected-cp) :value]
-		       prop-val)
-      (update-log-lik (:name selected-cp))
+      (set-proposed-val! (:name selected-cp) prop-val)
       (propagate-change-to (:dependents selected-cp))
 	
       (if (trace-failed?)
