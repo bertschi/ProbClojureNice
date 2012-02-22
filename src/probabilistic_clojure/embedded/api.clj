@@ -454,11 +454,11 @@ Returns a set of the names of the removed choice points."
 (defn propagate-change-to
   "Propagate a change, starting with the given choice points."
   [cp-names]
-  (loop [cpns (into clojure.lang.PersistentQueue/EMPTY cp-names)
+  (loop [cpns (into clojure.lang.PersistentQueue/EMPTY cp-names) ; (seq cp-names) 
 	 update-count 0]
     (if-not (empty? cpns)
-      (let [cp-name (peek cpns)
-	    more-cps (pop cpns)
+      (let [cp-name (peek cpns) ; (first cpns)
+	    more-cps (pop cpns) ; (rest cpns) ; 
 	    cp (fetch-store :choice-points (get cp-name))
 	    old-val (:recomputed cp)]
 	;; (println cp-name ": " (count cp-names)) (Thread/sleep 10)
@@ -471,10 +471,11 @@ Returns a set of the names of the removed choice points."
 			    ;; no propagation beyond prob. and unchanged choice points
 			    []
 			    (:dependents cp))]
-	  ;; this implements breadth-first traversal and potentially re-registers
-	  ;; cp for update ... ensures valid data after the propagation completes
+	  ;; this implements (depth-first) breadth-first (with PersistentQueue)
+	  ;; traversal and potentially re-registers cp for update ...
+	  ;; ensures valid data after the propagation completes
+	  ;; (recur (concat direct-deps more-cps) (inc update-count))))
 	  (recur (into more-cps direct-deps) (inc update-count))))
-      ;; (recur (reduce conj more-cps direct-deps) (inc update-count))))
       update-count)))
   
 ;; (defn propagate-change-to
