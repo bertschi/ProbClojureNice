@@ -81,7 +81,15 @@
 	  p (flip-cp :p (if (gv a) 0.2 0.8))
 	  d (det-cp :d (list :d (gv p) (gv c)))
 	  e (det-cp :e (list :e (gv p)))]
-      (println (ordered-dependencies (:name a) (fetch-store :choice-points))))))
+      (let [old-propagate propagate-change-to]
+	(with-redefs [propagate-change-to
+		      (fn [cp-names]
+			(println cp-names ": "
+				 (fetch-store :choice-points (get (first cp-names)) :dependents))
+			(Thread/sleep 100)
+			(old-propagate cp-names))]
+	  (propagate-change-to
+	   (fetch-store :choice-points (get (:name a)) :dependents)))))))
 
 
 (defn topsort-bug []
@@ -109,12 +117,22 @@
       (show-cps)
       (refresh)    
       (set-value! a false)
-      (propagate-change-to
-       ;; don't recompute a, we have set its value!
-       (rest (ordered-dependencies (:name a) (fetch-store :choice-points))))
-      ;; now we are inconsistent -> b still sees the old value of c!!!
-      (show-cps))))
-  
+      (let [old-propagate propagate-change-to]
+	(with-redefs [propagate-change-to
+		      (fn [cp-names]
+			(println cp-names ": "
+				 (fetch-store :choice-points (get (first cp-names)) :dependents))
+			(Thread/sleep 100)
+			(old-propagate cp-names))]
+	  (propagate-change-to
+	   (fetch-store :choice-points (get (:name a)) :dependents))
+	  ;; this works nicely now
+	  (show-cps)
+	  ;; so flip a back again
+	  (set-value! a true)
+	  (propagate-change-to
+	   (fetch-store :choice-points (get (:name a)) :dependents))
+	  (show-cps))))))
 
 (defn test-retracts-net
   "Somewhat involved example of a changing topology, to test dependency tracking and sampling."
