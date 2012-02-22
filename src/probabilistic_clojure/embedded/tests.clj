@@ -80,12 +80,19 @@
 	  c (det-cp :c (list :c (gv b) (gv a)))
 	  p (flip-cp :p (if (gv a) 0.2 0.8))
 	  d (det-cp :d (list :d (gv p) (gv c)))
-	  e (det-cp :e (list :e (gv p)))]
+	  e (det-cp :e (list :e (gv p)))
+
+	  show-cps (fn []
+		     (doseq [[name cp] (fetch-store :choice-points)]
+		       (println (cp-str cp))))]
       ;; Not using topological sort any more, but all choice points up-to data after propagation
+      (show-cps)
+      (assoc-in-store! [:choice-points (:name a) :recomputed] :aa)
       (println "Updated "
 	       (propagate-change-to
 		(fetch-store :choice-points (get (:name a)) :dependents))
-	       " choice points"))))
+	       " choice points")
+      (show-cps))))
 
 
 (defn topsort-bug []
@@ -125,7 +132,7 @@
 	       (propagate-change-to
 		(fetch-store :choice-points (get (:name a)) :dependents))
 	       " choice points")
-      (show-cps))))))
+      (show-cps))))
 
 (defn test-retracts-net
   "Somewhat involved example of a changing topology, to test dependency tracking and sampling."
