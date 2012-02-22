@@ -453,31 +453,29 @@ Returns a set of the names of the removed choice points."
 
 (defn propagate-change-to
   "Propagate a change, starting with the given choice points."
-  [cp-names update-count]
-  ;; (let [cpns (vec cp-names)]
-  ;;   (if (pos? (count cpns))
-  ;;     (let [cp-name (cpns 0)
-  ;; 	    more-cps (subvec cpns 1)
-  (if-let [cpns (seq cp-names)]
-    (let [[cp-name & more-cps] cpns
-	  cp (fetch-store :choice-points (get cp-name))
-	  old-val (:recomputed cp)]
-      ;; (println cp-name ": " (count cp-names)) (Thread/sleep 10)
-      (recompute-value cp)
-      (when (= (:type cp) ::probabilistic)
-	(update-log-lik (:name cp)))
-      (let [direct-deps (if (or (= (:type cp) ::probabilistic)
-				(= old-val (fetch-store :choice-points
-							(get cp-name) :recomputed)))
-			  ;; no propagation beyond prob. and unchanged choice points
-			  []
-			  (vec (:dependents cp)))]
-	;; this implements depth-first (breadth-first is SLOW!!)
-	;; traversal and potentially re-registers
-	;; cp for update ... ensures valid data after the propagation completes
-	(recur (concat direct-deps more-cps) (inc update-count))))
-	;; (recur (reduce conj more-cps direct-deps) (inc update-count))))
-    update-count))
+  [cp-names]
+  (loop [cpns (into clojure.lang.PersistentQueue/EMPTY cp-names)
+	 update-count 0]
+    (if-not (empty? cpns)
+      (let [cp-name (peek cpns)
+	    more-cps (pop cpns)
+	    cp (fetch-store :choice-points (get cp-name))
+	    old-val (:recomputed cp)]
+	;; (println cp-name ": " (count cp-names)) (Thread/sleep 10)
+	(recompute-value cp)
+	(when (= (:type cp) ::probabilistic)
+	  (update-log-lik (:name cp)))
+	(let [cp (fetch-store :choice-points (get cp-name)) ; re-read to see changes
+	      direct-deps (if (or (= (:type cp) ::probabilistic)
+				  (= old-val (:recomputed cp)))
+			    ;; no propagation beyond prob. and unchanged choice points
+			    []
+			    (:dependents cp))]
+	  ;; this implements breadth-first traversal and potentially re-registers
+	  ;; cp for update ... ensures valid data after the propagation completes
+	  (recur (into more-cps direct-deps) (inc update-count))))
+      ;; (recur (reduce conj more-cps direct-deps) (inc update-count))))
+      update-count)))
   
 ;; (defn propagate-change-to
 ;;   "Propagate a change by recomputing all the given choice points in order."
@@ -504,7 +502,7 @@ Returns a set of the names of the removed choice points."
 	(assoc-in-store! [:choice-points name :conditioned?]
 			 true)
 	(update-log-lik name)
-	(propagate-change-to (:dependents prob-cp) 0)
+	(propagate-change-to (:dependents prob-cp))
 	cond-val))))
 
 (defmacro memo [tag cp-form & memo-args]
@@ -603,7 +601,7 @@ Implements the heuristic to prefer choice points with many dependents."
 	  (propose selected-cp (:value selected-cp))]
       ;; Propose a new value for the selected choice point and propagate change to dependents
       (set-proposed-val! (:name selected-cp) prop-val)
-      (let [updates (propagate-change-to (:dependents selected-cp) 0)]
+      (let [updates (propagate-change-to (:dependents selected-cp))]
 	;; (println "Proposed " (:name selected-cp) " for " updates " updates ("
 	;; 	 (count-all-dependents (:name selected-cp) choice-points) " dependents)"))
 	)

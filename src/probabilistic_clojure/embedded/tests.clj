@@ -81,21 +81,17 @@
 	  p (flip-cp :p (if (gv a) 0.2 0.8))
 	  d (det-cp :d (list :d (gv p) (gv c)))
 	  e (det-cp :e (list :e (gv p)))]
-      (let [old-propagate propagate-change-to]
-	(with-redefs [propagate-change-to
-		      (fn [cp-names]
-			(println cp-names ": "
-				 (fetch-store :choice-points (get (first cp-names)) :dependents))
-			(Thread/sleep 100)
-			(old-propagate cp-names))]
-	  (propagate-change-to
-	   (fetch-store :choice-points (get (:name a)) :dependents)))))))
+      ;; Not using topological sort any more, but all choice points up-to data after propagation
+      (println "Updated "
+	       (propagate-change-to
+		(fetch-store :choice-points (get (:name a)) :dependents))
+	       " choice points"))))
 
 
 (defn topsort-bug []
   ;; Illustrates a bug resulting from update in topological order if order changes
   ;; during the re-evaluation!!!
-  ;; TODO: Needs fix ... major rewrite necessary
+  ;; DONE: Should be fixed now ... but unnecessary recomputations triggered
   (with-fresh-store {}
     (let [c (atom 0)
 	  a (det-cp :a true)
@@ -117,22 +113,19 @@
       (show-cps)
       (refresh)    
       (set-value! a false)
-      (let [old-propagate propagate-change-to]
-	(with-redefs [propagate-change-to
-		      (fn [cp-names]
-			(println cp-names ": "
-				 (fetch-store :choice-points (get (first cp-names)) :dependents))
-			(Thread/sleep 100)
-			(old-propagate cp-names))]
-	  (propagate-change-to
-	   (fetch-store :choice-points (get (:name a)) :dependents))
-	  ;; this works nicely now
-	  (show-cps)
-	  ;; so flip a back again
-	  (set-value! a true)
-	  (propagate-change-to
-	   (fetch-store :choice-points (get (:name a)) :dependents))
-	  (show-cps))))))
+      (println "Updated "
+	       (propagate-change-to
+		(fetch-store :choice-points (get (:name a)) :dependents))
+	       " choice points")
+      ;; this works nicely now
+      (show-cps)
+      ;; so flip a back again
+      (set-value! a true)
+      (println "Updated "
+	       (propagate-change-to
+		(fetch-store :choice-points (get (:name a)) :dependents))
+	       " choice points")
+      (show-cps))))))
 
 (defn test-retracts-net
   "Somewhat involved example of a changing topology, to test dependency tracking and sampling."
