@@ -49,10 +49,12 @@ to test dependency tracking and sampling."
 	     0.25)))
   
 (deftest grass-demos
-  (are [sampler bayes-net]
-       (prob= (get (sample-bayes-net 10000 bayes-net sampler) true) 1419/3029)
-       ;; The exact prob. of the grass net being true was calculated with the prob. monad
-       monte-carlo-sampling         grass-bayes-net
-       metropolis-hastings-sampling grass-bayes-net
-       monte-carlo-sampling         grass-bayes-net-fixed
-       metropolis-hastings-sampling grass-bayes-net-fixed))
+  (let [true-prob (float 1419/3029)]
+    ;; The exact prob. of the grass net being true was calculated with the prob. monad
+    (are [sampler bayes-net]
+	 (prob= (get (sample-bayes-net 10000 bayes-net sampler) true) true-prob)
+	 
+	 monte-carlo-sampling         grass-bayes-net
+	 metropolis-hastings-sampling grass-bayes-net
+	 monte-carlo-sampling         grass-bayes-net-fixed
+	 metropolis-hastings-sampling grass-bayes-net-fixed)))
