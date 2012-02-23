@@ -93,8 +93,8 @@
     (doseq [[idx point] (indexed data)]
       (let [comp (discrete-cp [:comp idx] (zipmap comp-labels (gv comp-weights)))]
 	;;     mu-comp (det-cp [:mu-comp idx] (gv (get comp-mus (gv comp))))]
-	;; (cond-data (gaussian-cp [:mu idx] (gv mu-comp) 1.0) point)
-	(cond-data (gaussian-cp [:mu idx] (gv (get comp-mus (gv comp))) 1.0) point)))
+	;; (cond-data (gaussian-cp [:obs idx] (gv mu-comp) 1.0) point)
+	(cond-data (gaussian-cp [:obs idx] (gv (get comp-mus (gv comp))) 1.0) point)))
     (det-cp :mixture
       [(into {} (for [[comp mu] comp-mus] [comp (gv mu)]))
        (gv comp-weights)])))
@@ -110,25 +110,24 @@
 		  [comp (gv (memo [:mu comp] (gaussian-cp :mu 0.0 10.0) comp))]))
        (gv comp-weights)])))
        
-(defn transpose
-  "Transpose a list of lists, i.e. (transpose [[1 2] [3 4] [5 6]]) = ((1 3 5) (2 4 6))"
-  [lls]
-  (apply map list lls))
-
 (defn test-mixture [comp-labels model]
   (let [data-plot (histogram data :title "Dataset" :nbins 50 :density true)
-	samples  (take 200 (drop 7500 (metropolis-hastings-sampling (fn [] (model comp-labels data)))))
-	comp-mus (map first samples)
-	comp-weights (map second samples)]
-    (let [xs (range -10 10 0.01)
-	  weights (map mean (transpose comp-weights))
-	  mus (map mean (transpose (for [mus comp-mus] [(:a mus) (:b mus) (:c mus)])))]
-      (doto data-plot
-	(add-lines xs (map (fn [x] (* (nth weights 0) (pdf-normal x :mean (nth mus 0)))) xs))
-	(add-lines xs (map (fn [x] (* (nth weights 1) (pdf-normal x :mean (nth mus 1)))) xs))
-	(add-lines xs (map (fn [x] (* (nth weights 2) (pdf-normal x :mean (nth mus 2)))) xs))
-	view)
-      [weights mus])))
+	num-comp (count comp-labels)
+	[comp-mus weights]  (last (take 7500 (metropolis-hastings-sampling (fn [] (model comp-labels data)))))
+	mus (for [label comp-labels] (get comp-mus label))
+	
+	xs (range -10 10 0.01)
+
+	comp-pdf (fn [i x]
+		   (* (nth weights i) (pdf-normal x :mean (nth mus i) :sd 1)))
+	mix-pdf  (fn [x] (reduce + (for [i (range num-comp)] (comp-pdf i x))))]
+    ;; add the pdf of the fitted mixture
+    (add-lines data-plot xs (map mix-pdf xs))
+    ;; and all individual components to the plot
+    (doseq [i (range num-comp)]
+      (add-lines data-plot xs (map (partial comp-pdf i) xs)))
+    (view data-plot)
+    [weights mus]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
