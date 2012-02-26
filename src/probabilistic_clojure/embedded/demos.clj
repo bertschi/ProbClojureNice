@@ -25,6 +25,7 @@
       :doc "Part of probabilistic-clojure.embedded. Collection of demo programs."}
   probabilistic-clojure.embedded.demos
   (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure cond-data memo metropolis-hastings-sampling)]
+	[probabilistic-clojure.utils.stuff :only (indexed)]
 	[probabilistic-clojure.utils.sampling :only (sample-from normalize density)]
 	[probabilistic-clojure.embedded.choice-points
 	 :only (flip-cp gaussian-cp dirichlet-cp log-pdf-dirichlet discrete-cp log-pdf-discrete dirichlet-process)]
@@ -81,9 +82,6 @@
 		    (generate-data)))))
 
 (def data (take 42 (generate-data)))
-
-(defn indexed [coll]
-  (map vector (iterate inc 0) coll)) 
 
 (defn mixture [comp-labels data]
   (let [comp-weights (dirichlet-cp :weights (for [_ comp-labels] 10.0))
