@@ -98,9 +98,13 @@ of probabilistic choice points."}
        norm)))
 
 (def ^:dynamic *dirichlet-proposal-factor* 42)
+(def ^:dynamic *dirichlet-initial-factor*  1)
 
 (def-prob-cp dirichlet-cp [alphas]
-  :sampler [] (first (sample-dirichlet 2 alphas))
+  :sampler [] (first
+	       (sample-dirichlet 2
+				 (map (partial * probabilistic-clojure.embedded.choice-points/*dirichlet-initial-factor*)
+				      alphas)))
   :calc-log-lik [ps] (log-pdf-dirichlet ps alphas)
   :proposer [old-ps] (letfn [(proposal-alphas [alphas]
 			       (for [a alphas]

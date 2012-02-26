@@ -28,7 +28,7 @@
 	[probabilistic-clojure.utils.stuff :only (indexed)]
 	[probabilistic-clojure.utils.sampling :only (sample-from normalize density)]
 	[probabilistic-clojure.embedded.choice-points
-	 :only (dirichlet-cp log-pdf-dirichlet discrete-cp log-pdf-discrete)]
+	 :only (dirichlet-cp log-pdf-dirichlet *dirichlet-initial-factor* discrete-cp log-pdf-discrete)]
 
 	[incanter.core   :only (view sqrt)]
 	[incanter.stats  :only (sample-dirichlet sample-multinomial sample-uniform)])
@@ -147,28 +147,15 @@ Each topic is a sequence of words that can appear in this topic."
 (def frame (doto (new JFrame) (.add panel) .pack .show))
 
 (defn run [num skip]
-  (doseq [[i tops] (indexed
-		    (take num
-			  (metropolis-hastings-sampling
-			   (fn []
-			     (lda-model topic-labels demo-docs)))))]
-    (when (= (mod i skip) 0)
-      (dosync
-       (doseq [tl topic-labels]
-	 (ref-set (get topic-samples tl)
-		  (get tops tl))))
-      (. panel (repaint)))))
-
-  ;; (dorun
-  ;;  (for [[i state] (indexed (take num (em-states data)))]
-  ;;    (let []
-  ;;      (println i)
-  ;;      (when (= (mod i skip) 0)
-  ;; 	 (dosync
-  ;; 	  (dorun
-  ;; 	   (for [[[t w] c] (:counts (:ctw state))]
-  ;; 	     (ref-set (nth topic-samples t)
-  ;; 		      (assoc @(nth topic-samples t) w
-  ;; 			     (omega state t w))))))
-  ;; 	 (. panel (repaint))))))
-  ;; :done)
+  (binding [*dirichlet-initial-factor* 50]
+    (doseq [[i tops] (indexed
+		      (take num
+			    (metropolis-hastings-sampling
+			     (fn []
+			       (lda-model topic-labels demo-docs)))))]
+      (when (= (mod i skip) 0)
+	(dosync
+	 (doseq [tl topic-labels]
+	   (ref-set (get topic-samples tl)
+		    (get tops tl))))
+	(. panel (repaint))))))
