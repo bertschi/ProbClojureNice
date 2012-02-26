@@ -71,10 +71,12 @@ of probabilistic choice points."}
 ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(def ^:dynamic *gaussian-proposal-sdev* 0.7)
+
 (def-prob-cp gaussian-cp [mu sdev]
   :sampler [] (sample-normal 1 :mean mu :sd sdev)
   :calc-log-lik [x] (Math/log (pdf-normal x :mean mu :sd sdev))
-  :proposer [old-x] (let [proposal-sd 0.7
+  :proposer [old-x] (let [proposal-sd probabilistic-clojure.embedded.choice-points/*gaussian-proposal-sdev*
 			  new-x (sample-normal 1 :mean old-x :sd proposal-sd)]
 		      [new-x
 		       (Math/log (pdf-normal new-x :mean old-x :sd proposal-sd))
@@ -101,7 +103,8 @@ of probabilistic choice points."}
   :sampler [] (first (sample-dirichlet 2 alphas))
   :calc-log-lik [ps] (log-pdf-dirichlet ps alphas)
   :proposer [old-ps] (letfn [(proposal-alphas [alphas]
-			       (for [a alphas] (* *dirichlet-proposal-factor* a)))]
+			       (for [a alphas]
+				 (* probabilistic-clojure.embedded.choice-points/*dirichlet-proposal-factor* a)))]
 		       (let [new-ps (first (sample-dirichlet 2 (proposal-alphas old-ps)))]
 			 [new-ps
 			  (log-pdf-dirichlet new-ps (proposal-alphas old-ps))
