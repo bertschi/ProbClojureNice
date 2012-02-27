@@ -23,7 +23,7 @@
 (ns
     ^{:author "Nils Bertschinger"
       :doc "Part of probabilistic-clojure.embedded. Demo of Latent Dirichlet Allocation."}
-  probabilistic-clojure.embedded.lda_demo
+  probabilistic-clojure.embedded.lda-demo
   (:use [probabilistic-clojure.embedded.api :only (det-cp gv cond-data memo metropolis-hastings-sampling)]
 	[probabilistic-clojure.utils.stuff :only (indexed)]
 	[probabilistic-clojure.utils.sampling :only (sample-from normalize density)]
@@ -37,7 +37,7 @@
 	   [javax.swing JPanel JFrame]))
 
 
-(in-ns 'probabilistic-clojure.embedded.lda_demo)
+(in-ns 'probabilistic-clojure.embedded.lda-demo)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
