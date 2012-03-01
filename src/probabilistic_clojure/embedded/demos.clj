@@ -24,8 +24,8 @@
     ^{:author "Nils Bertschinger"
       :doc "Part of probabilistic-clojure.embedded. Collection of demo programs."}
   probabilistic-clojure.embedded.demos
-  (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure cond-data memo metropolis-hastings-sampling)]
-	[probabilistic-clojure.utils.stuff :only (indexed)]
+  (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure cond-data memo metropolis-hastings-sampling def-prob-cp)]
+	[probabilistic-clojure.utils.stuff :only (indexed error)]
 	[probabilistic-clojure.utils.sampling :only (sample-from normalize density)]
 	[probabilistic-clojure.embedded.choice-points
 	 :only (flip-cp gaussian-cp dirichlet-cp log-pdf-dirichlet discrete-cp log-pdf-discrete dirichlet-process)]
@@ -125,6 +125,37 @@
       (add-lines data-plot xs (map (partial comp-pdf i) xs)))
     (view data-plot)
     [weights mus]))
+
+;;; now we collapse out the component assignments
+
+(def sum (partial reduce +))
+
+(def-prob-cp collapsed-mixture-cp [comp-probs comp-models]
+  :sampler [] [] ; just a dummy initialization ... no data drawn from model
+  :calc-log-lik [xs]
+  (sum (for [x xs]
+	 (Math/log ; switch to log-probabilities
+	  (sum (for [[p cm] (zipmap comp-probs comp-models)]
+		 ;; component model is a function that calculates the
+		 ;; probability for a given datapoint
+		 (* p (cm x)))))))
+  :proposer [_] (error "collapsed-mixture-cp does not implement a proposer!"))
+
+(defn gaussian-comp-model [mu sdev]
+  (fn [x] (pdf-normal x :mean mu :sd sdev)))
+
+(defn mixture-collapsed [comp-labels data]
+  (let [comp-weights (dirichlet-cp :weights (repeat (count comp-labels) 10.0))
+	comp-mus     (for [label comp-labels]
+		       (gaussian-cp [:mu label] 0.0 10.0))
+	comp-models (det-cp :models
+			    (doall (for [mu-cp comp-mus]
+				     (gaussian-comp-model (gv mu-cp) 1.0))))]
+    (cond-data (collapsed-mixture-cp :data (gv comp-weights) (gv comp-models))
+	       data)
+    (det-cp :mixture
+      [(zipmap comp-labels (map gv comp-mus))
+       (gv comp-weights)])))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
