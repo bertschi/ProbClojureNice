@@ -25,7 +25,7 @@
       :doc "Part of probabilistic-clojure.embedded. Collection of demo programs."}
   probabilistic-clojure.embedded.demos
   (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure cond-data memo metropolis-hastings-sampling def-prob-cp)]
-	[probabilistic-clojure.utils.stuff :only (indexed error)]
+	[probabilistic-clojure.utils.stuff :only (indexed)]
 	[probabilistic-clojure.utils.sampling :only (sample-from normalize density)]
 	[probabilistic-clojure.embedded.choice-points
 	 :only (flip-cp gaussian-cp dirichlet-cp log-pdf-dirichlet discrete-cp log-pdf-discrete dirichlet-process)]
@@ -139,7 +139,8 @@
 		 ;; component model is a function that calculates the
 		 ;; probability for a given datapoint
 		 (* p (cm x)))))))
-  :proposer [_] (error "collapsed-mixture-cp does not implement a proposer!"))
+  :proposer [_] (probabilistic-clojure.utils.stuff/error
+		 "collapsed-mixture-cp does not implement a proposer!"))
 
 (defn gaussian-comp-model [mu sdev]
   (fn [x] (pdf-normal x :mean mu :sd sdev)))
