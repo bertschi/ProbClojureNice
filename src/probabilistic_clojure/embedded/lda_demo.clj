@@ -102,7 +102,7 @@
 
 ;;; Now generate example documents with the bar-like topics from the paper
 
-(def xy-dim 2)
+(def xy-dim 4)
 
 (def num-topics (* 2 xy-dim))
 (def num-words  (* xy-dim xy-dim))
@@ -127,16 +127,18 @@ Each topic is a sequence of words that can appear in this topic."
 
 (defn train-data [n topics]
   (for [theta (sample-dirichlet n (repeat (count topics) beta))]
-    (sample-document (sample-uniform 1 :min 33 :max 44 :integers true) theta topics)))
-
-(def demo-docs (train-data 55 (topics)))
+    ;; (sample-document (sample-uniform 1 :min 33 :max 44 :integers true) theta topics)))
+    (sample-document 113 theta topics)))
+    
+;; (def demo-docs (train-data 55 (topics)))
+(def demo-docs (train-data 123 (topics)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; UI ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;pixels per world cell
 (def scale 25)
 
-(def topic-labels  (map (partial str "T") (range num-topics)))
+(def topic-labels  (doall (map (partial str "T") (range num-topics))))
 (def topic-samples (into {} (for [tl topic-labels] [tl (ref {})])))
 
 (defn fill-cell [#^Graphics g x y c]
