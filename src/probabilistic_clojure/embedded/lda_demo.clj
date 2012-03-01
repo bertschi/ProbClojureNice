@@ -23,13 +23,14 @@
 (ns
     ^{:author "Nils Bertschinger"
       :doc "Part of probabilistic-clojure.embedded. Demo of Latent Dirichlet Allocation."}
-  probabilistic-clojure.embedded.lda_demo
+  probabilistic-clojure.embedded.lda-demo
   (:use [probabilistic-clojure.embedded.api :only (det-cp gv cond-data memo metropolis-hastings-sampling)]
 	[probabilistic-clojure.utils.stuff :only (indexed)]
 	[probabilistic-clojure.utils.sampling :only (sample-from normalize density)]
 	[probabilistic-clojure.embedded.choice-points
 	 :only (dirichlet-cp log-pdf-dirichlet *dirichlet-initial-factor* discrete-cp log-pdf-discrete)]
-
+	[probabilistic-clojure.embedded.demos :only (collapsed-mixture-cp)]
+	 
 	[incanter.core   :only (view sqrt)]
 	[incanter.stats  :only (sample-dirichlet sample-multinomial sample-uniform)])
   (:import [java.awt Color Graphics Dimension]
@@ -37,7 +38,7 @@
 	   [javax.swing JPanel JFrame]))
 
 
-(in-ns 'probabilistic-clojure.embedded.lda_demo)
+(in-ns 'probabilistic-clojure.embedded.lda-demo)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -51,7 +52,7 @@
 (def alpha 1)
 (def beta  1)
 
-(defn lda-model [topic-labels documents]
+(defn lda [topic-labels documents]
   (let [words (distinct (apply concat documents))
 	num-topics (count topic-labels)
 	alphas (repeat (count words) alpha)
@@ -75,6 +76,29 @@
 			      (gv (memo [:topic tl]
 					(dirichlet-cp :weights alphas) tl)))]))))))
 						      
+
+(defn lda-collapsed [topic-labels documents]
+  (let [words (distinct (apply concat documents))
+	num-topics (count topic-labels)
+	alphas (repeat (count words) alpha)
+	betas  (repeat num-topics    beta)
+
+	topic-dists (for [tl topic-labels]
+		      (dirichlet-cp [:topic tl] alphas))]
+    (doseq [[i doc] (indexed documents)]
+      (let [topic-weights (dirichlet-cp [:weights i] betas)
+	    topic-models  (det-cp [:models i]
+				  (doall (for [w-probs topic-dists]
+					   (let [w-dist (zipmap words (gv w-probs))]
+					     (fn [word] (get w-dist word))))))]
+	(cond-data (collapsed-mixture-cp [:doc i]
+					 (gv topic-weights) (gv topic-models))
+		   doc)))
+    (det-cp :lda-collapsed
+	    (into {}
+		  (for [[tl top] (zipmap topic-labels topic-dists)]
+		    [tl (zipmap words (gv top))])))))
+						  
 
 ;;; Now generate example documents with the bar-like topics from the paper
 
@@ -146,7 +170,7 @@ Each topic is a sequence of words that can appear in this topic."
 
 (def frame (doto (new JFrame) (.add panel) .pack .show))
 
-(defn run [num skip]
+(defn run [num skip lda-model]
   (binding [*dirichlet-initial-factor* 50]
     (doseq [[i tops] (indexed
 		      (take num
