@@ -128,17 +128,16 @@
 
 ;;; now we collapse out the component assignments
 
-(def sum (partial reduce +))
-
 (def-prob-cp collapsed-mixture-cp [comp-probs comp-models]
   :sampler [] [] ; just a dummy initialization ... no data drawn from model
   :calc-log-lik [xs]
-  (sum (for [x xs]
-	 (Math/log ; switch to log-probabilities
-	  (sum (for [[p cm] (zipmap comp-probs comp-models)]
-		 ;; component model is a function that calculates the
-		 ;; probability for a given datapoint
-		 (* p (cm x)))))))
+  (let [sum (partial reduce +)]
+    (sum (for [x xs]
+	   (Math/log ; switch to log-probabilities
+	    (sum (for [[p cm] (zipmap comp-probs comp-models)]
+		   ;; component model is a function that calculates the
+		   ;; probability for a given datapoint
+		   (* p (cm x))))))))
   :proposer [_] (probabilistic-clojure.utils.stuff/error
 		 "collapsed-mixture-cp does not implement a proposer!"))
 
