@@ -102,7 +102,7 @@
 
 ;;; Now generate example documents with the bar-like topics from the paper
 
-(def xy-dim 2)
+(def xy-dim 3)
 
 (def num-topics (* 2 xy-dim))
 (def num-words  (* xy-dim xy-dim))

@@ -98,6 +98,7 @@ of probabilistic choice points."}
        norm)))
 
 (def ^:dynamic *dirichlet-proposal-factor* 42)
+(def ^:dynamic *dirichlet-proposal-shift* 0.001) ; found a paper claiming that this is good
 (def ^:dynamic *dirichlet-initial-factor*  1)
 
 (def-prob-cp dirichlet-cp [alphas]
@@ -108,7 +109,8 @@ of probabilistic choice points."}
   :calc-log-lik [ps] (log-pdf-dirichlet ps alphas)
   :proposer [old-ps] (letfn [(proposal-alphas [alphas]
 			       (for [a alphas]
-				 (* probabilistic-clojure.embedded.choice-points/*dirichlet-proposal-factor* a)))]
+				 (+ (* probabilistic-clojure.embedded.choice-points/*dirichlet-proposal-factor* a)
+				    probabilistic-clojure.embedded.choice-points/*dirichlet-proposal-shift*)))]
 		       (let [new-ps (first (sample-dirichlet 2 (proposal-alphas old-ps)))]
 			 [new-ps
 			  (log-pdf-dirichlet new-ps (proposal-alphas old-ps))
