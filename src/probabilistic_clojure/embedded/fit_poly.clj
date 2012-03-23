@@ -36,12 +36,29 @@
 
 (in-ns 'probabilistic-clojure.embedded.fit-poly)
 
-(defn poly
+(defn poly-ranked
   "Evaluate the polynomial with the given coefficients at x:
 f(x) = coeffs[0] + coeffs[1]*x + ... + coeffs[k]*x^(k-1)"
   [x coeffs]
 
   (reduce + (map * coeffs (iterate (partial * x) 1))))
+
+(defn poly-horner
+  "Evaluate the polynomial with the given coefficients at x. 
+Evaluation follows the Horner scheme: 
+f(x) = coeffs[0] + x*(coeffs[1] + ... + x*(coeffs[k])...)" 
+  [x coeffs]
+
+  (reduce (fn [y c]
+	      (+ c (* x y)))
+	  (reverse coeffs)))
+
+(defn poly-roots
+  [x [scale & roots]]
+  (* scale 
+     (reduce * (map #(- x %) roots))))
+
+(def poly poly-horner)
 
 (def test-poly [-1 1 -0.7 0.3])
 
@@ -57,7 +74,7 @@ f(x) = coeffs[0] + coeffs[1]*x + ... + coeffs[k]*x^(k-1)"
 
 ;; special gaussian-cp which initially returns mu
 (def-prob-cp gaussian0-cp [mu sdev]
-  :sampler [] mu
+  :sampler [] (sample-normal 1 :mean 0 :sd 0.1)
   :calc-log-lik [x] (Math/log (pdf-normal x :mean mu :sd sdev))
   :proposer [old-x] (let [proposal-sd *gaussian-proposal-sdev*
 			  new-x (sample-normal 1 :mean old-x :sd proposal-sd)]
