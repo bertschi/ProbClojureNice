@@ -26,7 +26,7 @@
   probabilistic-clojure.embedded.fit-poly
   (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure cond-data metropolis-hastings-sampling def-prob-cp)]
 	[probabilistic-clojure.utils.stuff :only (indexed)]
-	[probabilistic-clojure.utils.sampling :only (normalize sample-from)]
+	[probabilistic-clojure.utils.sampling :only (normalize sample-from density)]
 	[probabilistic-clojure.embedded.choice-points
 	 :only (gaussian-cp discrete-cp log-pdf-discrete *gaussian-proposal-sdev*)]
 
@@ -145,9 +145,11 @@ f(x) = coeffs[0] + coeffs[1]*x + ... + coeffs[k]*x^(k-1)"
 (defn poly-demo-shared [ranks data]
   (let [xs (range -5 5 0.05)
 
-	fitted (last (take 75000 (metropolis-hastings-sampling
-				 (fn [] (poly-fit-shared ranks demo-data)))))
+	samples (take 75000 (metropolis-hastings-sampling
+			     (fn [] (poly-fit-shared ranks demo-data))))
+	fitted (last samples)
 	graph (scatter-plot (map first demo-data) (map second demo-data))]
+    (println (density (map first samples)))
     (doseq [r ranks]
       (add-lines graph xs (map #(poly % (take r (second fitted))) xs)))
     (view graph)))
