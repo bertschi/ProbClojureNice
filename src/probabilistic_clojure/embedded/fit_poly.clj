@@ -58,7 +58,22 @@ f(x) = coeffs[0] + x*(coeffs[1] + ... + x*(coeffs[k])...)"
   (* scale 
      (reduce * (map #(- x %) roots))))
 
-(def poly poly-horner)
+(defn ^:dynamic legendre-basis [n x]
+  (cond (= n 0) 1
+	(= n 1) x
+	:else (let [n- (dec n)]
+		(/ (- (* (+ (* 2 n-) 1) x (legendre-basis n- x))
+		      (* n- (legendre-basis (dec n-) x)))
+		   n))))
+
+(defn poly-legendre [x coeffs]
+  (binding [legendre-basis (memoize legendre-basis)]
+    (let [x (/ x 4)]
+      (reduce +
+	      (for [[i c] (indexed coeffs)]
+		(* c (legendre-basis i x)))))))
+
+(def poly poly-legendre)
 
 (def test-poly [-1 1 -0.7 0.3])
 
@@ -69,12 +84,12 @@ f(x) = coeffs[0] + x*(coeffs[1] + ... + x*(coeffs[k])...)"
      (repeatedly 17
 		 (fn []
 		   (let [x (uni-rand -5 5)
-			 y (poly x test-poly)]
+			 y (poly-ranked x test-poly)]
 		     [x (sample-normal 1 :mean y :sd 2)]))))
 
 ;; special gaussian-cp which initially returns mu
 (def-prob-cp gaussian0-cp [mu sdev]
-  :sampler [] (sample-normal 1 :mean 0 :sd 0.1)
+  :sampler [] (sample-normal 1 :mean 0 :sd 0.1) ;; mu
   :calc-log-lik [x] (Math/log (pdf-normal x :mean mu :sd sdev))
   :proposer [old-x] (let [proposal-sd *gaussian-proposal-sdev*
 			  new-x (sample-normal 1 :mean old-x :sd proposal-sd)]
