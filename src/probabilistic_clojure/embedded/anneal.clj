@@ -260,9 +260,8 @@ and restarting sampling."}
   depends on how well the Markov chains are mixing."
   [prob-thunk annealing-schedule]
 
-  (println "Trying to find a valid trace ...")
   (let [[cp choice-points] (find-valid-trace prob-thunk)]
-    (println "Started sampling")
+    (println "Sampling ...")
     (let [[x-0 log-weights choice-points]
 	  (reduce (fn [[x-n-1 log-ws choice-points] [beta-n-1 steps-T-n-1]]
 		    (let [prob-x-n-1 (* beta-n-1 (total-log-lik (keys choice-points) choice-points))
@@ -273,8 +272,8 @@ and restarting sampling."}
 				       (annealed-importance-acceptor beta-n-1))))
 			  prob-x-n-2 (* beta-n-1 (total-log-lik (keys new-choice-points)
 								new-choice-points))]
-		      (println "Chain moved " x-n-1 " to " x-n-2)
-		      (println "Log. weight difference: " (- prob-x-n-1 prob-x-n-2))
+		      ;; (println "Chain moved " x-n-1 " to " x-n-2)
+		      ;; (println "Log. weight difference: " (- prob-x-n-1 prob-x-n-2))
 		      [x-n-2
 		       (conj log-ws (- prob-x-n-1 prob-x-n-2))
 		       new-choice-points]))
@@ -296,16 +295,40 @@ and restarting sampling."}
 (use '[probabilistic-clojure.utils.stuff :only (indexed)])
 (use '[incanter.stats :only (sample-normal pdf-normal)])
 
-(defn gauss-fit [data]
-  (let [mu (gaussian-cp :mu 0 10)]
+(defn gauss-fit [sd-prior sd-likelihood data]
+  (let [mu (gaussian-cp :mu 0 sd-prior)]
     (doseq [[i x] (indexed data)]
-      (cond-data (gaussian-cp [:obs i] (gv mu) 1)
+      (cond-data (gaussian-cp [:obs i] (gv mu) sd-likelihood)
 		 x))
     (det-cp :fit (gv mu))))
 
 (def xs (sample-normal 25 :mean 2.7 :sd 1))
 
-(defn test-ais [xs]
-  (let [a-schedule (for [beta (range 0.05 0.95 0.05)]
-		     [beta 75])]
-    (annealed-importance-sample (fn [] (gauss-fit xs)) a-schedule)))
+;; The theoretical marginal likelihood for the Gaussian mean fit
+
+(defn log-marginal-likelihood [sd-prior sd-likelihood xs]
+  (let [N    (count xs)
+	x-mu (/ (reduce + xs) N)
+	x-S  (reduce + (map (fn [x] (* (- x x-mu) (- x x-mu))) xs))]
+    ;; formula from MacKay's book (pp. 322 eq. 24.13)
+    (+ (- (* N (Math/log (* (Math/sqrt (* 2 Math/PI)) sd-likelihood))))
+       (- (/ x-S (* 2 (* sd-likelihood sd-likelihood))))
+       (Math/log (/ (/ (* (Math/sqrt (* 2 Math/PI)) sd-likelihood)
+		       (Math/sqrt N))
+		    sd-prior)))))
+
+;; The empirical average of the importance weights should be close to that!
+
+(defn test-ais [xs num-samples]
+  (let [sd-prior      10
+	sd-likelihood 1
+	a-schedule (for [beta (range 0.05 0.95 0.05)]
+		     [beta 100])
+	samples
+	(repeatedly num-samples
+		    (fn [] (annealed-importance-sample (fn [] (gauss-fit sd-prior sd-likelihood xs)) a-schedule)))]
+    [(/ (reduce + (map :log-importance-weight samples))
+	(count samples))
+     (log-marginal-likelihood sd-prior sd-likelihood xs)
+     (map :value samples)
+     (map :log-importance-weight samples)]))
