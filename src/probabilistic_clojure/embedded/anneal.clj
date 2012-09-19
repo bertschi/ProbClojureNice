@@ -119,7 +119,7 @@ and restarting sampling."}
 		   [next-choice-points status same-topology next-selection-dist]
 		   (metropolis-hastings-stepper choice-points (first update-seq) selection-dist acceptor)
 		   
-		   output-info (= (mod idx *info-steps*) 0)]
+		   output-info false] ;; (= (mod idx *info-steps*) 0)]
 	       (when output-info
 		 (println idx ": " val)
 		 (println "Log. lik.: " (total-log-lik (keys choice-points) choice-points))
@@ -234,3 +234,78 @@ and restarting sampling."}
 ;;;       points to handle prior and likelihood weights differently!
 ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn annealed-importance-acceptor
+  "One way to obtain a sequence of chains for annealed importance
+  sampling. Uses the Metropolis-Hastings acceptance condition, but
+  mixes for the distribution p(x)^beta instead of p(x)."
+  [beta]
+  (fn [prop-trace-log-lik trace-log-lik total-fwd-log-lik total-bwd-log-lik]
+    (< (Math/log (rand))
+       (+ (* beta (- prop-trace-log-lik trace-log-lik))
+	  (- total-bwd-log-lik total-fwd-log-lik)))))
+
+(defn annealed-importance-sample
+  "Implements annealed importance sampling to draw ONE sample with its
+  corresponding importance weight. For the sample a sequence of
+  Markov-chains according to the given annealing schedule (sequence of
+  [beta num-steps] pairs) is run and used to calculate its importance
+  weight. Beta should start close to zero and then slowly increase
+  towards 1.
+
+  Running this function repeatedly produces independent, weighted
+  samples from the distribution specified by the probabilistic
+  function prob-thunk. The variance of the importance weights can be
+  used as diagnostic for the quality of the obtained samples which
+  depends on how well the Markov chains are mixing."
+  [prob-thunk annealing-schedule]
+
+  (println "Trying to find a valid trace ...")
+  (let [[cp choice-points] (find-valid-trace prob-thunk)]
+    (println "Started sampling")
+    (let [[x-0 log-weights choice-points]
+	  (reduce (fn [[x-n-1 log-ws choice-points] [beta-n-1 steps-T-n-1]]
+		    (let [prob-x-n-1 (* beta-n-1 (total-log-lik (keys choice-points) choice-points))
+			  {x-n-2 :value new-choice-points :choice-points}
+			  (last (take steps-T-n-1
+				      (metropolis-hastings-sampling-core
+				       [cp choice-points]
+				       (annealed-importance-acceptor beta-n-1))))
+			  prob-x-n-2 (* beta-n-1 (total-log-lik (keys new-choice-points)
+								new-choice-points))]
+		      (println "Chain moved " x-n-1 " to " x-n-2)
+		      (println "Log. weight difference: " (- prob-x-n-1 prob-x-n-2))
+		      [x-n-2
+		       (conj log-ws (- prob-x-n-1 prob-x-n-2))
+		       new-choice-points]))
+		  [(cp-value cp choice-points)
+		   (let [uncond-cps (filter (fn [cp] (not (:conditioned? cp))) (vals choice-points))
+			 prior-log-lik (total-log-lik (map :name uncond-cps) choice-points)]
+		     [(- prior-log-lik)])
+		   choice-points]
+		  annealing-schedule)
+	  prob-x-0 (total-log-lik (keys choice-points) choice-points)]
+      {:value x-0
+       :log-importance-weight (+ prob-x-0 (reduce + log-weights))
+       :debug (conj log-weights prob-x-0)})))
+
+;; Try this on a very simple model, i.e. fitting the mean of a
+;; standard Gaussian with a Gaussian prior
+
+(use '[probabilistic-clojure.embedded.choice-points :only (gaussian-cp)])
+(use '[probabilistic-clojure.utils.stuff :only (indexed)])
+(use '[incanter.stats :only (sample-normal pdf-normal)])
+
+(defn gauss-fit [data]
+  (let [mu (gaussian-cp :mu 0 10)]
+    (doseq [[i x] (indexed data)]
+      (cond-data (gaussian-cp [:obs i] (gv mu) 1)
+		 x))
+    (det-cp :fit (gv mu))))
+
+(def xs (sample-normal 25 :mean 2.7 :sd 1))
+
+(defn test-ais [xs]
+  (let [a-schedule (for [beta (range 0.05 0.95 0.05)]
+		     [beta 75])]
+    (annealed-importance-sample (fn [] (gauss-fit xs)) a-schedule)))
