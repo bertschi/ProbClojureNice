@@ -261,7 +261,7 @@ and restarting sampling."}
   [prob-thunk annealing-schedule]
 
   (let [[cp choice-points] (find-valid-trace prob-thunk)]
-    (println "Sampling ...")
+    (print "Sampling ... ")
     (let [[x-0 log-weights choice-points]
 	  (reduce (fn [[x-n-1 log-ws choice-points] [beta-n-1 steps-T-n-1]]
 		    (let [prob-x-n-1 (* beta-n-1 (total-log-lik (keys choice-points) choice-points))
@@ -284,6 +284,7 @@ and restarting sampling."}
 		   choice-points]
 		  annealing-schedule)
 	  prob-x-0 (total-log-lik (keys choice-points) choice-points)]
+      (println "value: " x-0 " with weight: " (+ prob-x-0 (reduce + log-weights)))
       {:value x-0
        :log-importance-weight (+ prob-x-0 (reduce + log-weights))
        :debug (conj log-weights prob-x-0)})))
@@ -316,6 +317,8 @@ and restarting sampling."}
        (Math/log (/ (/ (* (Math/sqrt (* 2 Math/PI)) sd-likelihood)
 		       (Math/sqrt N))
 		    sd-prior)))))
+
+;; TODO: check this formula ... seems to use improper flat prior!!!
 
 ;; The empirical average of the importance weights should be close to that!
 
