@@ -296,42 +296,109 @@ and restarting sampling."}
 (use '[probabilistic-clojure.utils.stuff :only (indexed)])
 (use '[incanter.stats :only (sample-normal pdf-normal)])
 
-(defn gauss-fit [sd-prior sd-likelihood data]
-  (let [mu (gaussian-cp :mu 0 sd-prior)]
+(defn gauss-fit [mu-prior sd-prior sd-likelihood data]
+  (let [mu (gaussian-cp :mu mu-prior sd-prior)]
     (doseq [[i x] (indexed data)]
       (cond-data (gaussian-cp [:obs i] (gv mu) sd-likelihood)
 		 x))
     (det-cp :fit (gv mu))))
 
-(def xs (sample-normal 25 :mean 2.7 :sd 1))
+(def xs (sample-normal 10 :mean 2.5 :sd 1))
 
-;; The theoretical marginal likelihood for the Gaussian mean fit
+;; The theoretical posterior and marginal likelihood for the Gaussian
+;; mean fit Formulas are from notes by Kevin Murphy ... simplify by
+;; using precision (lambda) instead of variance
 
-(defn log-marginal-likelihood [sd-prior sd-likelihood xs]
-  (let [N    (count xs)
-	x-mu (/ (reduce + xs) N)
-	x-S  (reduce + (map (fn [x] (* (- x x-mu) (- x x-mu))) xs))]
-    ;; formula from MacKay's book (pp. 322 eq. 24.13)
-    (+ (- (* N (Math/log (* (Math/sqrt (* 2 Math/PI)) sd-likelihood))))
-       (- (/ x-S (* 2 (* sd-likelihood sd-likelihood))))
-       (Math/log (/ (/ (* (Math/sqrt (* 2 Math/PI)) sd-likelihood)
-		       (Math/sqrt N))
-		    sd-prior)))))
+(defn posterior [mu-0 lambda-0 lambda xs]
+  (let [lambda-n (+ lambda-0 (* (count xs) lambda))
+        mu-n     (/ (+ (* lambda (reduce + xs))
+                       (* lambda-0 mu-0))
+                    lambda-n)]
+    {:mu mu-n :sdev (Math/sqrt (/ 1 lambda-n))}))
 
+(defn log-marginal-likelihood [mu-0 lambda-0 lambda xs]
+  ;; formula (42) from the notes
+  (let [sig (Math/sqrt (/ 1 lambda))
+        n-*-x-mean (reduce + xs)
+        n (count xs)]
+    (+ (Math/log (/ sig (* (Math/pow (* (Math/sqrt (* 2 Math/PI)) sig) n)
+                           (Math/sqrt (+ (* n (/ 1 lambda-0)) (/ 1 lambda))))))
+       (- (+ (/ (reduce + (map * xs xs)) (* 2 (/ 1 lambda)))
+             (/ (* mu-0 mu-0) (* 2 (/ 1 lambda-0)))))
+       (/ (+ (/ (* (/ 1 lambda-0) n-*-x-mean n-*-x-mean)
+                (/ 1 lambda))
+             (/ (* (/ 1 lambda) mu-0 mu-0)
+                (/ 1 lambda-0))
+             (* 2 n-*-x-mean mu-0))
+          (* 2 (+ (* n (/ 1 lambda-0)) (/ 1 lambda)))))))
+  
 ;; TODO: check this formula ... seems to use improper flat prior!!!
 
 ;; The empirical average of the importance weights should be close to that!
 
+(use '[incanter.core :only (view)])
+(use '[incanter.charts :only (histogram add-lines)])
+
+(use '[probabilistic-clojure.utils.sampling :only (sample-from normalize density)])
+
+(defn resampling-distribution [importance-samples]
+  (let [max-log-weight (reduce max (map :log-importance-weight importance-samples))]
+    (normalize
+     (into {} (for [sample importance-samples]
+                [(:value sample)
+                 (Math/exp (- (:log-importance-weight sample) max-log-weight))])))))
+
+(defn log-sum-exp
+  "Evaluates \\log \\sum_i e^{x_i}."
+  [xs]
+  (let [x-max (apply max xs)]
+    (+ x-max
+       (Math/log (sum (map #(Math/exp (- % x-max)) xs))))))
+
 (defn test-ais [xs num-samples]
-  (let [sd-prior      10
+  (let [mu-prior      0
+        sd-prior      10
 	sd-likelihood 1
+        lambda-0      (/ 1 (* sd-prior sd-prior))
+        lambda        (/ 1 (* sd-likelihood sd-likelihood))
+
+        {mu-n :mu sd-n :sdev} (posterior mu-prior lambda-0 lambda xs)
+        
 	a-schedule (for [beta (range 0.05 0.95 0.05)]
 		     [beta 100])
 	samples
 	(repeatedly num-samples
-		    (fn [] (annealed-importance-sample (fn [] (gauss-fit sd-prior sd-likelihood xs)) a-schedule)))]
-    [(/ (reduce + (map :log-importance-weight samples))
-	(count samples))
-     (log-marginal-likelihood sd-prior sd-likelihood xs)
-     (map :value samples)
-     (map :log-importance-weight samples)]))
+		    (fn [] (annealed-importance-sample (fn [] (gauss-fit mu-prior sd-prior sd-likelihood xs)) a-schedule)))]
+    (println "Posterior: mu = " mu-n ", sdev = " sd-n)
+    (println "Log. marginal likelihood of data: " (log-marginal-likelihood mu-prior lambda-0 lambda xs))
+    (println "Log. average importance weights:  "
+             (- (log-sum-exp (map :log-importance-weight samples))
+                (Math/log (count samples))))
+    (let [dist (resampling-distribution samples)
+          hist (histogram (repeatedly 250 (fn [] (sample-from dist)))
+                          :nbins 50 :density true)
+          x-range (range -5 5 0.01)]
+      (doto hist
+        (add-lines x-range (map (fn [x] (pdf-normal x :mean mu-n :sd sd-n)) x-range))
+        view))))
+
+(defn test-MH [xs num-samples]
+  (let [mu-prior      0
+        sd-prior      10
+	sd-likelihood 1
+        lambda-0      (/ 1 (* sd-prior sd-prior))
+        lambda        (/ 1 (* sd-likelihood sd-likelihood))
+
+        {mu-n :mu sd-n :sdev} (posterior mu-prior lambda-0 lambda xs)
+
+        samples (take num-samples
+                      (drop 2500
+                            (standard-metropolis-hastings-sampling
+                             (fn [] (gauss-fit mu-prior sd-prior sd-likelihood xs)))))
+
+        hist (histogram (repeatedly 250 (fn [] (sample-from (density samples))))
+                        :nbins 50 :density true)
+        x-range (range -5 5 0.01)]
+    (doto hist
+      (add-lines x-range (map (fn [x] (pdf-normal x :mean mu-n :sd sd-n)) x-range))
+      view)))
