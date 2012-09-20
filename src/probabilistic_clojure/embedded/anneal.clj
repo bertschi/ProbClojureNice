@@ -355,6 +355,14 @@ and restarting sampling."}
     (+ x-max
        (Math/log (sum (map #(Math/exp (- % x-max)) xs))))))
 
+(defn effective-size
+  "Calculates the effective sample size for the given importance weights:
+    N_{eff} = \\frac{(\\sum_i w_i)^2}{\\sum w_i^2}
+  "
+  [importance-weights]
+  (Math/exp (- (* 2 (log-sum-exp importance-weights))
+               (log-sum-exp (map (partial * 2) importance-weights)))))
+  
 (defn test-ais [xs num-samples]
   (let [mu-prior      0
         sd-prior      10
@@ -374,6 +382,7 @@ and restarting sampling."}
     (println "Log. average importance weights:  "
              (- (log-sum-exp (map :log-importance-weight samples))
                 (Math/log (count samples))))
+    (println "Effective sample size: " (effective-size (map :log-importance-weight samples)))
     (let [dist (resampling-distribution samples)
           hist (histogram (repeatedly 250 (fn [] (sample-from dist)))
                           :nbins 50 :density true)
