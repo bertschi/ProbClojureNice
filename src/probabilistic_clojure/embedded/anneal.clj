@@ -37,6 +37,27 @@ and restarting sampling."}
 ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defn split-log-lik
+  "Like total-log-lik, but returns two separate sums for the unconditioned
+   and conditioned choice points. This allows to distinguish the prior (unconditioned)
+   and likelihood contributions (conditioned) to the total log-likelihood
+   of the trace.
+   Choice points not in the trace are allowed and don't effect the result."
+  
+  [cp-names choice-points]
+  (reduce (fn [[uncond-sum cond-sum :as sums] cp-name]
+            (let [cp (choice-points cp-name)]
+              (case (:type cp)
+                :probabilistic-clojure.embedded.api/probabilistic
+                (if (:conditioned? cp)
+                  [uncond-sum (+ cond-sum (:log-lik cp))]
+                  [(+ uncond-sum (:log-lik cp)) cond-sum])
+                :probabilistic-clojure.embedded.api/deterministic
+                sums
+                ;; else
+                sums)))
+          [0 0] cp-names))
+
 (defn metropolis-hastings-stepper [choice-points selected selection-dist acceptor]
   (with-fresh-store choice-points
     (let [selected-cp (choice-points selected)
@@ -67,8 +88,8 @@ and restarting sampling."}
 	      ;; Thus, we have to calculate the total probability contributed to the old
 	      ;; as well as the new traces.
 	      touched-cps (union (fetch-store :recomputed) removed-cps)
-	      trace-log-lik (total-log-lik touched-cps choice-points)
-	      prop-trace-log-lik (total-log-lik touched-cps (fetch-store :choice-points))
+	      [uncond-trace-log-lik cond-trace-log-lik]           (split-log-lik touched-cps choice-points)
+	      [uncond-prop-trace-log-lik cond-prop-trace-log-lik] (split-log-lik touched-cps (fetch-store :choice-points))
 
 	      ;; The forward and backward probabilities now account for the newly-created
 	      ;; and removed choice points
@@ -83,8 +104,8 @@ and restarting sampling."}
 				    				 (fetch-store :choice-points))
 				    	(remove-from-prob-choice-dist removed-cps)))]
 	  ;; Randomly accept the new proposal according to the Metropolis Hastings formula
-	  (if (acceptor prop-trace-log-lik
-			trace-log-lik
+	  (if (acceptor uncond-prop-trace-log-lik cond-prop-trace-log-lik
+			uncond-trace-log-lik      cond-trace-log-lik
 			;; the total forward proposal probability
 			(+ (Math/log (prob selection-dist (:name selected-cp)))
 			   fwd-trace-log-lik
@@ -119,7 +140,7 @@ and restarting sampling."}
 		   [next-choice-points status same-topology next-selection-dist]
 		   (metropolis-hastings-stepper choice-points (first update-seq) selection-dist acceptor)
 		   
-		   output-info false] ;; (= (mod idx *info-steps*) 0)]
+		   output-info (and *info-steps* (= (mod idx *info-steps*) 0))]
 	       (when output-info
 		 (println idx ": " val)
 		 (println "Log. lik.: " (total-log-lik (keys choice-points) choice-points))
@@ -149,10 +170,14 @@ and restarting sampling."}
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn metropolis-hastings-acceptor
-  [prop-trace-log-lik trace-log-lik total-fwd-log-lik total-bwd-log-lik]
+  [uncond-prop-trace-log-lik cond-prop-trace-log-lik
+   uncond-trace-log-lik      cond-trace-log-lik
+   total-fwd-log-lik         total-bwd-log-lik]
   (< (Math/log (rand))
-     (+ (- prop-trace-log-lik trace-log-lik)
-	(- total-bwd-log-lik total-fwd-log-lik))))
+     (+ (- (+ uncond-prop-trace-log-lik cond-prop-trace-log-lik)
+           (+ uncond-trace-log-lik      cond-trace-log-lik))
+	(- total-bwd-log-lik
+           total-fwd-log-lik))))
 
 (defn standard-metropolis-hastings-sampling
   ([prob-thunk]
@@ -167,19 +192,20 @@ and restarting sampling."}
 					       acceptor)))))
 
 ;; test this on the demo code
-;;
-;; (probabilistic-clojure.utils.sampling/density
-;;  (take 7500
-;;        (drop 500
-;; 	     (standard-metropolis-hastings-sampling
-;; 	      probabilistic-clojure.embedded.demos/grass-bayes-net))))
 
-;; (last
-;;  (take 7500
-;;        (standard-metropolis-hastings-sampling
-;; 	(fn [] (probabilistic-clojure.embedded.demos/mixture-memo 
-;; 		[:a :b :c]
-;; 		probabilistic-clojure.embedded.demos/data)))))
+(comment
+  (probabilistic-clojure.utils.sampling/density
+   (take 7500
+         (drop 500
+               (standard-metropolis-hastings-sampling
+                probabilistic-clojure.embedded.demos/grass-bayes-net))))
+  
+  (last
+   (take 7500
+         (standard-metropolis-hastings-sampling
+          (fn [] (probabilistic-clojure.embedded.demos/mixture-memo 
+                  [:a :b :c]
+                  probabilistic-clojure.embedded.demos/data))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -188,13 +214,28 @@ and restarting sampling."}
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn simulated-annealing-acceptor [inv-temperature]
-  (fn [prop-trace-log-lik trace-log-lik total-fwd-log-lik total-bwd-log-lik]
+  (fn [uncond-prop-trace-log-lik cond-prop-trace-log-lik
+       uncond-trace-log-lik      cond-trace-log-lik
+       total-fwd-log-lik         total-bwd-log-lik]
     ;; ignores the forward-backward probability and accepts according
-    ;; to the scaled (with the inverse temperature) likelihood
+    ;; to the scaled (with the inverse temperature) total log-probability
     ;; difference
     (< (Math/log (rand))
        (* inv-temperature
-	  (- prop-trace-log-lik trace-log-lik)))))
+	  (- (+ uncond-prop-trace-log-lik cond-prop-trace-log-lik)
+             (+ uncond-trace-log-lik      cond-trace-log-lik))))))
+
+(defn simulated-annealing-acceptor-prior [inv-temperature]
+  (fn [uncond-prop-trace-log-lik cond-prop-trace-log-lik
+       uncond-trace-log-lik      cond-trace-log-lik
+       total-fwd-log-lik         total-bwd-log-lik]
+    ;; ignores the forward-backward probability and accepts according
+    ;; to the (unscaled) prior and scaled (with the inverse temperature)
+    ;; log-likelihood difference
+    (< (Math/log (rand))
+       (+ (- uncond-prop-trace-log-lik uncond-trace-log-lik)
+          (* inv-temperature
+             (- cond-prop-trace-log-lik cond-trace-log-lik))))))
 
 (defn simulated-annealing
   "Implements simulated annealing. The temperature schedule is a
@@ -202,29 +243,31 @@ and restarting sampling."}
 
   Usually one wants to start with a rather low inverse temperature and
   increase it over time."
-  [prob-thunk inv-temperature-schedule]
-
-  (println "Trying to find a valid trace ...")
-  (let [[cp choice-points] (find-valid-trace prob-thunk)]
-    (println "Started sampling")
-    (reduce concat
-	    (first
-	     (reduce (fn [[samples choice-points] [inv-temperature steps]]
-		       (let [more-samples
-			     (take steps (metropolis-hastings-sampling-core
-					  [cp choice-points]
-					  (simulated-annealing-acceptor inv-temperature)))]
-			 [(conj samples (map :value more-samples))
-			  (:choice-points (last more-samples))]))
-		     [[] choice-points]
-		     inv-temperature-schedule)))))
+  ([prob-thunk inv-temperature-schedule]
+     (simulated-annealing prob-thunk inv-temperature-schedule simulated-annealing-acceptor))
+  ([prob-thunk inv-temperature-schedule acceptor]
+     (println "Trying to find a valid trace ...")
+     (let [[cp choice-points] (find-valid-trace prob-thunk)]
+       (println "Started sampling")
+       (reduce concat
+               (first
+                (reduce (fn [[samples choice-points] [inv-temperature steps]]
+                          (let [more-samples
+                                (take steps (metropolis-hastings-sampling-core
+                                             [cp choice-points]
+                                             (acceptor inv-temperature)))]
+                            [(conj samples (map :value more-samples))
+                             (:choice-points (last more-samples))]))
+                        [[] choice-points]
+                        inv-temperature-schedule))))))
 
 ;; This nicely optimizes the Gaussian mixture model
-;; (last
-;;  (simulated-annealing
-;;   (fn [] (probabilistic-clojure.embedded.demos/mixture-memo 
-;; 	  [:a :b :c] probabilistic-clojure.embedded.demos/data))
-;;   [[0.01 2500] [0.1 2500] [1 2500] [10 2500] [100 2500]]))
+(comment
+  (last
+   (simulated-annealing
+    (fn [] (probabilistic-clojure.embedded.demos/mixture-memo 
+            [:a :b :c] probabilistic-clojure.embedded.demos/data))
+    [[0.01 2500] [0.1 2500] [1 2500] [10 2500] [100 2500]])))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -238,11 +281,15 @@ and restarting sampling."}
 (defn annealed-importance-acceptor
   "One way to obtain a sequence of chains for annealed importance
   sampling. Uses the Metropolis-Hastings acceptance condition, but
-  mixes for the distribution p(x)^beta instead of p(x)."
+  mixes for the distribution p(x) p(y|x)^beta instead of p(x,y)."
   [beta]
-  (fn [prop-trace-log-lik trace-log-lik total-fwd-log-lik total-bwd-log-lik]
-    (< (Math/log (rand))
-       (+ (* beta (- prop-trace-log-lik trace-log-lik))
+  (fn
+    [uncond-prop-trace-log-lik cond-prop-trace-log-lik
+     uncond-trace-log-lik      cond-trace-log-lik
+     total-fwd-log-lik         total-bwd-log-lik]
+    (< (Math/log (rand))       
+       (+ (- uncond-prop-trace-log-lik uncond-trace-log-lik)
+          (* beta (- cond-prop-trace-log-lik cond-trace-log-lik))
 	  (- total-bwd-log-lik total-fwd-log-lik)))))
 
 (defn annealed-importance-sample
@@ -262,26 +309,29 @@ and restarting sampling."}
 
   (let [[cp choice-points] (find-valid-trace prob-thunk)]
     (print "Sampling ... ")
-    (let [[x-0 log-weights choice-points]
+    (let [chain-log-lik (fn [beta choice-points]
+                          (let [[uncond-log-lik cond-log-lik]
+                                (split-log-lik (keys choice-points) choice-points)]
+                            (+ uncond-log-lik (* beta cond-log-lik))))
+
+          [x-0 log-weights choice-points]
 	  (reduce (fn [[x-n-1 log-ws choice-points] [beta-n-1 steps-T-n-1]]
-		    (let [prob-x-n-1 (* beta-n-1 (total-log-lik (keys choice-points) choice-points))
+		    (let [prob-x-n-1 (chain-log-lik beta-n-1 choice-points)
 			  {x-n-2 :value new-choice-points :choice-points}
 			  (last (take steps-T-n-1
 				      (metropolis-hastings-sampling-core
 				       [cp choice-points]
 				       (annealed-importance-acceptor beta-n-1))))
-			  prob-x-n-2 (* beta-n-1 (total-log-lik (keys new-choice-points)
-								new-choice-points))]
+			  prob-x-n-2 (chain-log-lik beta-n-1 new-choice-points)]
 		      ;; (println "Chain moved " x-n-1 " to " x-n-2)
 		      ;; (println "Log. weight difference: " (- prob-x-n-1 prob-x-n-2))
 		      [x-n-2
 		       (conj log-ws (- prob-x-n-1 prob-x-n-2))
 		       new-choice-points]))
 		  [(cp-value cp choice-points)
-		   (let [uncond-cps (filter (fn [cp] (not (:conditioned? cp))) (vals choice-points))
-			 prior-log-lik (total-log-lik (map :name uncond-cps) choice-points)]
+		   (let [[prior-log-lik _] (split-log-lik (keys choice-points) choice-points)]
 		     [(- prior-log-lik)])
-		   choice-points]
+                   choice-points]
 		  annealing-schedule)
 	  prob-x-0 (total-log-lik (keys choice-points) choice-points)]
       (println "value: " x-0 " with weight: " (+ prob-x-0 (reduce + log-weights)))
@@ -379,9 +429,14 @@ and restarting sampling."}
 		    (fn [] (annealed-importance-sample (fn [] (gauss-fit mu-prior sd-prior sd-likelihood xs)) a-schedule)))]
     (println "Posterior: mu = " mu-n ", sdev = " sd-n)
     (println "Log. marginal likelihood of data: " (log-marginal-likelihood mu-prior lambda-0 lambda xs))
-    (println "Log. average importance weights:  "
-             (- (log-sum-exp (map :log-importance-weight samples))
-                (Math/log (count samples))))
+    (let [log-imp-mean (- (log-sum-exp (map :log-importance-weight samples))
+                          (Math/log (count samples)))]
+      (println "Log. average importance weights:  "
+               log-imp-mean)
+      (println "Variance of importance weights: "
+               (- (Math/exp (log-sum-exp (map (comp (partial * 2) :log-importance-weight)
+                                              samples)))
+                  (Math/exp log-imp-mean))))
     (println "Effective sample size: " (effective-size (map :log-importance-weight samples)))
     (let [dist (resampling-distribution samples)
           hist (histogram (repeatedly 250 (fn [] (sample-from dist)))
