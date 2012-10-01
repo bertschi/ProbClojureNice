@@ -403,7 +403,7 @@ and restarting sampling."}
   [xs]
   (let [x-max (apply max xs)]
     (+ x-max
-       (Math/log (sum (map #(Math/exp (- % x-max)) xs))))))
+       (Math/log (reduce + (map #(Math/exp (- % x-max)) xs))))))
 
 (defn effective-size
   "Calculates the effective sample size for the given importance weights:
@@ -422,21 +422,26 @@ and restarting sampling."}
 
         {mu-n :mu sd-n :sdev} (posterior mu-prior lambda-0 lambda xs)
         
-	a-schedule (for [beta (range 0.05 0.95 0.05)]
-		     [beta 100])
+	;; a-schedule (for [beta (range 0.05 0.95 0.05)]
+	;; 	     [beta 100])
+	a-schedule (for [beta (range 0.01 1 0.01)]
+		     [beta 10])
 	samples
 	(repeatedly num-samples
 		    (fn [] (annealed-importance-sample (fn [] (gauss-fit mu-prior sd-prior sd-likelihood xs)) a-schedule)))]
     (println "Posterior: mu = " mu-n ", sdev = " sd-n)
     (println "Log. marginal likelihood of data: " (log-marginal-likelihood mu-prior lambda-0 lambda xs))
-    (let [log-imp-mean (- (log-sum-exp (map :log-importance-weight samples))
-                          (Math/log (count samples)))]
-      (println "Log. average importance weights:  "
-               log-imp-mean)
-      (println "Variance of importance weights: "
-               (- (Math/exp (log-sum-exp (map (comp (partial * 2) :log-importance-weight)
-                                              samples)))
-                  (Math/exp log-imp-mean))))
+    (println "Log. average importance weights:  "
+             (- (log-sum-exp (map :log-importance-weight samples))
+                (Math/log (count samples))))
+    ;; How to calculate the variance of those weights to access sample quality????
+    ;; (let [N-eff (effective-size (map :log-importance-weight samples))]
+    ;;   (println (map :log-importance-weight samples))
+    ;;   (println "Variance of importance weights: "
+    ;;            (- (/ (count samples) N-eff)
+    ;;               1)
+    ;;            " "
+    ;;            (reduce + (map #(* % %) (vals (resampling-distribution samples))))))
     (println "Effective sample size: " (effective-size (map :log-importance-weight samples)))
     (let [dist (resampling-distribution samples)
           hist (histogram (repeatedly 250 (fn [] (sample-from dist)))
