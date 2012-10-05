@@ -140,7 +140,11 @@ and restarting sampling."}
 		   [next-choice-points status same-topology next-selection-dist]
 		   (metropolis-hastings-stepper choice-points (first update-seq) selection-dist acceptor)
 		   
-		   output-info (and *info-steps* (= (mod idx *info-steps*) 0))]
+		   output-info     (and *info-steps* (= (mod idx *info-steps*) 0))
+		   num-accepted    (if (= status ::accepted)
+				     (inc num-accepted) num-accepted)
+		   num-top-changed (if same-topology
+				     num-top-changed (inc num-top-changed))]
 	       (when output-info
 		 (println idx ": " val)
 		 (println "Log. lik.: " (total-log-lik (keys choice-points) choice-points))
@@ -149,12 +153,8 @@ and restarting sampling."}
 	       (cons {:value val :choice-points choice-points}
 		     (samples next-choice-points
 			      (inc idx)
-			      (cond output-info 0
-				    (= status ::accepted) (inc num-accepted)
-				    :else num-accepted)
-			      (cond output-info 0
-				    (not same-topology) (inc num-top-changed)
-				    :else num-top-changed)
+			      (if output-info 0 num-accepted)
+			      (if output-info 0 num-top-changed)
 			      (if same-topology
 				(rest update-seq)
 				(new-update-sequence next-selection-dist))
