@@ -24,19 +24,18 @@
     ^{:author "Nils Bertschinger"
       :doc "Part of probabilistic-clojure.embedded. Demo of Latent Dirichlet Allocation."}
   probabilistic-clojure.embedded.lda-demo
-  (:use [probabilistic-clojure.embedded.api :only (det-cp gv cond-data memo metropolis-hastings-sampling)]
+  (:use [probabilistic-clojure.embedded.api :only (det-cp gv cond-data memo metropolis-hastings-sampling def-prob-cp)]
 	[probabilistic-clojure.utils.stuff :only (indexed)]
 	[probabilistic-clojure.utils.sampling :only (sample-from normalize density)]
 	[probabilistic-clojure.embedded.choice-points
 	 :only (dirichlet-cp log-pdf-dirichlet *dirichlet-initial-factor* discrete-cp log-pdf-discrete)]
-	[probabilistic-clojure.embedded.demos :only (collapsed-mixture-cp)]
 	 
 	[incanter.core   :only (view sqrt)]
-	[incanter.stats  :only (sample-dirichlet sample-multinomial sample-uniform)])
+	[incanter.stats  :only (sample-dirichlet sample-multinomial sample-uniform sample-gamma)])
   (:import [java.awt Color Graphics Dimension]
 	   [java.awt.image BufferedImage]
-	   [javax.swing JPanel JFrame]))
-
+	   [javax.swing JPanel JFrame]
+           [org.apache.commons.math.special Gamma]))
 
 (in-ns 'probabilistic-clojure.embedded.lda-demo)
 
@@ -77,6 +76,24 @@
 					(dirichlet-cp :weights alphas) tl)))]))))))
 						      
 
+;;; Collapsing out the topic assignments should be faster
+
+;; A collapsed mixture choice point that takes contigency counts as
+;; data (usually much faster than the one in demo.clj)
+(def-prob-cp collapsed-mixture-cp [comp-probs comp-models]
+  :sampler [] [] ; just a dummy initialization ... no data drawn from model
+  :calc-log-lik [counts]
+  (let [sum (partial reduce +)]
+    (sum (for [[x c] counts]
+	   (* c
+              (Math/log ; switch to log-probabilities
+               (sum (for [[p cm] (zipmap comp-probs comp-models)]
+                      ;; component model is a function that calculates the
+                      ;; probability for a given datapoint
+                      (* p (cm x)))))))))
+  :proposer [_] (probabilistic-clojure.utils.stuff/error
+		 "collapsed-mixture-cp does not implement a proposer!"))
+
 (defn lda-collapsed [topic-labels documents]
   (let [words (distinct (apply concat documents))
 	num-topics (count topic-labels)
@@ -93,16 +110,15 @@
 					     (fn [word] (get w-dist word))))))]
 	(cond-data (collapsed-mixture-cp [:doc i]
 					 (gv topic-weights) (gv topic-models))
-		   doc)))
+		   (frequencies doc))))
     (det-cp :lda-collapsed
 	    (into {}
 		  (for [[tl top] (zipmap topic-labels topic-dists)]
 		    [tl (zipmap words (gv top))])))))
 						  
-
 ;;; Now generate example documents with the bar-like topics from the paper
 
-(def xy-dim 3)
+(def xy-dim 5)
 
 (def num-topics (* 2 xy-dim))
 (def num-words  (* xy-dim xy-dim))
@@ -128,15 +144,15 @@ Each topic is a sequence of words that can appear in this topic."
 (defn train-data [n topics]
   (for [theta (sample-dirichlet n (repeat (count topics) beta))]
     ;; (sample-document (sample-uniform 1 :min 33 :max 44 :integers true) theta topics)))
-    (sample-document 88 theta topics)))
+    (sample-document 250 theta topics)))
     
 ;; (def demo-docs (train-data 55 (topics)))
-(def demo-docs (train-data 99 (topics)))
+(def demo-docs (train-data 150 (topics)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; UI ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;pixels per world cell
-(def scale 25)
+(def scale 20)
 
 (def topic-labels  (doall (map (partial str "T") (range num-topics))))
 (def topic-samples (into {} (for [tl topic-labels] [tl (ref {})])))
@@ -185,3 +201,40 @@ Each topic is a sequence of words that can appear in this topic."
 	   (ref-set (get topic-samples tl)
 		    (get tops tl))))
 	(. panel (repaint))))))
+
+;;; Dirichlet choice point based on Gamma samples => more local
+;;; proposal distribution
+
+(defn diri-probs [gammas]
+  (let [total (reduce + gammas)]
+    (vec (map #(/ % total) gammas))))
+
+;; un-normalized Dirichlet distribution
+(def-prob-cp dirichlet-cp-gamma [alphas]
+  :sampler [] (vec (for [a alphas] (sample-gamma 1 :shape a :rate 1)))
+  :calc-log-lik [gs] (log-pdf-dirichlet (diri-probs gs) alphas)
+  :proposer [old-gs] (let [idx (rand-int (count old-gs))
+                           new-g (sample-gamma 1 :shape (nth alphas idx) :rate 1)]
+                       [(assoc old-gs idx new-g) 0 0]))
+
+(defn lda-collapsed-gamma [topic-labels documents]
+  (let [words (distinct (apply concat documents))
+	num-topics (count topic-labels)
+	alphas (repeat (count words) alpha)
+	betas  (repeat num-topics    beta)
+
+	topic-dists (for [tl topic-labels]
+		      (dirichlet-cp-gamma [:topic tl] alphas))]
+    (doseq [[i doc] (indexed documents)]
+      (let [topic-weights (dirichlet-cp-gamma [:weights i] betas)
+	    topic-models  (det-cp [:models i]
+				  (doall (for [w-probs topic-dists]
+					   (let [w-dist (zipmap words (diri-probs (gv w-probs)))]
+					     (fn [word] (get w-dist word))))))]
+	(cond-data (collapsed-mixture-cp [:doc i]
+					 (diri-probs (gv topic-weights)) (gv topic-models))
+		   (frequencies doc))))
+    (det-cp :lda-collapsed
+	    (into {}
+		  (for [[tl top] (zipmap topic-labels topic-dists)]
+		    [tl (zipmap words (diri-probs (gv top)))])))))
