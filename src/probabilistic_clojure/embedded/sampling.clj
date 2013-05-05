@@ -23,11 +23,11 @@ Experimental support for simulated annealing as well as annealed
 importance sampling. Basically, refactors the core sampling routine to
 get a handle on the acceptance condition and allow for interrupting
 and restarting sampling."}
-  probabilistic-clojure.embedded.anneal
+  probabilistic-clojure.embedded.sampling
   (:use [clojure.set :only (union)])
   (:use probabilistic-clojure.embedded.api))
 
-(in-ns 'probabilistic-clojure.embedded.anneal)
+(in-ns 'probabilistic-clojure.embedded.sampling)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
