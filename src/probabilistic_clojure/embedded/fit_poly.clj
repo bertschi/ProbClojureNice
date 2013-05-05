@@ -24,11 +24,11 @@
     ^{:author "Nils Bertschinger"
       :doc "Part of probabilistic-clojure.embedded. Demo of fitting polynomials."}
   probabilistic-clojure.embedded.fit-poly
-  (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure cond-data metropolis-hastings-sampling def-prob-cp)]
+  (:use [probabilistic-clojure.embedded.api :only (det-cp gv cond-data metropolis-hastings-sampling def-prob-cp)]
 	[probabilistic-clojure.utils.stuff :only (indexed)]
-	[probabilistic-clojure.utils.sampling :only (normalize sample-from density)]
+	[probabilistic-clojure.utils.sampling :only (density)]
 	[probabilistic-clojure.embedded.choice-points
-	 :only (gaussian-cp discrete-cp log-pdf-discrete *gaussian-proposal-sdev*)]
+	 :only (gaussian-cp discrete-cp *gaussian-proposal-sdev*)]
 
 	[incanter.core   :only (view)]
 	[incanter.charts :only (histogram add-lines xy-plot scatter-plot)]

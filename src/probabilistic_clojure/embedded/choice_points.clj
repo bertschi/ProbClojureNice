@@ -26,8 +26,8 @@
 of probabilistic choice points."}
   probabilistic-clojure.embedded.choice-points
   (:use [probabilistic-clojure.embedded.api :only (def-prob-cp det-cp gv memo)]
-	[probabilistic-clojure.utils.stuff :only (ensure-list error)]
-	[incanter.stats :only (sample-normal pdf-normal sample-dirichlet sample-beta pdf-beta)])
+	[probabilistic-clojure.utils.stuff :only (ensure-list error)])
+  ;; (:require [incanter.stats :as stat]) ; This does not work inside macros!!!
   (:import org.apache.commons.math.special.Gamma))
   ;; (:import cern.jet.stat.tdouble.Gamma))
 
@@ -57,13 +57,14 @@ of probabilistic choice points."}
     (Math/log 0)))
 
 (def-prob-cp discrete-cp [dist]
-  :sampler [] (sample-from dist)
-  :calc-log-lik [x] (log-pdf-discrete x dist)
-  :proposer [old-x] (let [prop-dist (normalize (assoc dist old-x 0))
-			  new-x (sample-from prop-dist)]
+  :sampler [] (probabilistic-clojure.utils.sampling/sample-from dist)
+  :calc-log-lik [x] (probabilistic-clojure.embedded.choice-points/log-pdf-discrete x dist)
+  :proposer [old-x] (let [prop-dist (probabilistic-clojure.utils.sampling/normalize (assoc dist old-x 0))
+			  new-x (probabilistic-clojure.utils.sampling/sample-from prop-dist)]
 		      [new-x
-		       (log-pdf-discrete new-x prop-dist)
-		       (log-pdf-discrete old-x (normalize (assoc dist new-x 0)))]))
+		       (probabilistic-clojure.embedded.choice-points/log-pdf-discrete new-x prop-dist)
+		       (probabilistic-clojure.embedded.choice-points/log-pdf-discrete
+                        old-x (probabilistic-clojure.utils.sampling/normalize (assoc dist new-x 0)))]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -74,13 +75,13 @@ of probabilistic choice points."}
 (def ^:dynamic *gaussian-proposal-sdev* 0.7)
 
 (def-prob-cp gaussian-cp [mu sdev]
-  :sampler [] (sample-normal 1 :mean mu :sd sdev)
-  :calc-log-lik [x] (Math/log (pdf-normal x :mean mu :sd sdev))
+  :sampler [] (incanter.stats/sample-normal 1 :mean mu :sd sdev)
+  :calc-log-lik [x] (Math/log (incanter.stats/pdf-normal x :mean mu :sd sdev))
   :proposer [old-x] (let [proposal-sd probabilistic-clojure.embedded.choice-points/*gaussian-proposal-sdev*
-			  new-x (sample-normal 1 :mean old-x :sd proposal-sd)]
+			  new-x (incanter.stats/sample-normal 1 :mean old-x :sd proposal-sd)]
 		      [new-x
-		       (Math/log (pdf-normal new-x :mean old-x :sd proposal-sd))
-		       (Math/log (pdf-normal old-x :mean new-x :sd proposal-sd))]))
+		       (Math/log (incanter.stats/pdf-normal new-x :mean old-x :sd proposal-sd))
+		       (Math/log (incanter.stats/pdf-normal old-x :mean new-x :sd proposal-sd))]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -103,18 +104,19 @@ of probabilistic choice points."}
 
 (def-prob-cp dirichlet-cp [alphas]
   :sampler [] (first
-	       (sample-dirichlet 2
-				 (map (partial * probabilistic-clojure.embedded.choice-points/*dirichlet-initial-factor*)
-				      alphas)))
-  :calc-log-lik [ps] (log-pdf-dirichlet ps alphas)
+	       (incanter.stats/sample-dirichlet
+                2
+                (map (partial * probabilistic-clojure.embedded.choice-points/*dirichlet-initial-factor*)
+                     alphas)))
+  :calc-log-lik [ps] (probabilistic-clojure.embedded.choice-points/log-pdf-dirichlet ps alphas)
   :proposer [old-ps] (letfn [(proposal-alphas [alphas]
 			       (for [a alphas]
 				 (+ (* probabilistic-clojure.embedded.choice-points/*dirichlet-proposal-factor* a)
 				    probabilistic-clojure.embedded.choice-points/*dirichlet-proposal-shift*)))]
-		       (let [new-ps (first (sample-dirichlet 2 (proposal-alphas old-ps)))]
+		       (let [new-ps (first (incanter.stats/sample-dirichlet 2 (proposal-alphas old-ps)))]
 			 [new-ps
-			  (log-pdf-dirichlet new-ps (proposal-alphas old-ps))
-			  (log-pdf-dirichlet old-ps (proposal-alphas new-ps))])))
+			  (probabilistic-clojure.embedded.choice-points/log-pdf-dirichlet new-ps (proposal-alphas old-ps))
+			  (probabilistic-clojure.embedded.choice-points/log-pdf-dirichlet old-ps (proposal-alphas new-ps))])))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -123,12 +125,12 @@ of probabilistic choice points."}
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (def-prob-cp beta-cp [alpha beta]
-  :sampler [] (sample-beta 1 :alpha alpha :beta beta)
-  :calc-log-lik [x] (Math/log (pdf-beta x :alpha alpha :beta beta))
-  :proposer [old-x] (let [new-x (sample-beta 1 :alpha alpha :beta beta)]
+  :sampler [] (incanter.stats/sample-beta 1 :alpha alpha :beta beta)
+  :calc-log-lik [x] (Math/log (incanter.stats/pdf-beta x :alpha alpha :beta beta))
+  :proposer [old-x] (let [new-x (incanter.stats/sample-beta 1 :alpha alpha :beta beta)]
 		      [new-x
-		       (Math/log (pdf-beta new-x :alpha alpha :beta beta))
-		       (Math/log (pdf-beta old-x :alpha alpha :beta beta))]))
+		       (Math/log (incanter.stats/pdf-beta new-x :alpha alpha :beta beta))
+		       (Math/log (incanter.stats/pdf-beta old-x :alpha alpha :beta beta))]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;

@@ -26,9 +26,8 @@
   probabilistic-clojure.embedded.lda-demo
   (:use [probabilistic-clojure.embedded.api :only (det-cp gv cond-data memo metropolis-hastings-sampling def-prob-cp)]
 	[probabilistic-clojure.utils.stuff :only (indexed)]
-	[probabilistic-clojure.utils.sampling :only (sample-from normalize density)]
 	[probabilistic-clojure.embedded.choice-points
-	 :only (dirichlet-cp log-pdf-dirichlet *dirichlet-initial-factor* discrete-cp log-pdf-discrete)]
+	 :only (dirichlet-cp log-pdf-dirichlet *dirichlet-initial-factor* discrete-cp)]
 	 
 	[incanter.core   :only (view sqrt)]
 	[incanter.stats  :only (sample-dirichlet sample-multinomial sample-uniform sample-gamma)])
