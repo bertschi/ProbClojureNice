@@ -26,13 +26,13 @@
   probabilistic-clojure.embedded.demos
   (:use [probabilistic-clojure.embedded.api :only (det-cp gv trace-failure cond-data memo metropolis-hastings-sampling def-prob-cp)]
 	[probabilistic-clojure.utils.stuff :only (indexed)]
-	[probabilistic-clojure.utils.sampling :only (sample-from normalize density)]
+	[probabilistic-clojure.utils.sampling :only (sample-from density)]
 	[probabilistic-clojure.embedded.choice-points
-	 :only (flip-cp gaussian-cp dirichlet-cp log-pdf-dirichlet discrete-cp log-pdf-discrete dirichlet-process)]
+	 :only (flip-cp gaussian-cp dirichlet-cp discrete-cp dirichlet-process)]
 
 	[incanter.core   :only (view)]
 	[incanter.charts :only (histogram add-lines xy-plot)]
-	[incanter.stats  :only (sample-normal sample-dirichlet pdf-normal mean)]))
+	[incanter.stats  :only (mean sample-normal pdf-normal)]))
 
 (in-ns 'probabilistic-clojure.embedded.demos)
 

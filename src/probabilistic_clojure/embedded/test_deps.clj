@@ -21,7 +21,8 @@
 Checks dependency tracking between choice points"}
   probabilistic-clojure.embedded.test-deps
   (:use clojure.test)
-  (:use probabilistic-clojure.embedded.api))
+  (:use probabilistic-clojure.embedded.api
+        [probabilistic-clojure.embedded.choice-points :only (flip-cp)]))
 
 (in-ns 'probabilistic-clojure.embedded.test-deps)
 
