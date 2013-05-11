@@ -24,14 +24,14 @@
     ^{:author "Nils Bertschinger"
       :doc "Part of probabilistic-clojure.embedded. Demo of Latent Dirichlet Allocation."}
   probabilistic-clojure.embedded.lda-demo
-  (:use [probabilistic-clojure.embedded.api :only (det-cp gv cond-data memo metropolis-hastings-sampling def-prob-cp)]
+  (:use [probabilistic-clojure.embedded.api :only (det-cp gv cond-data memo metropolis-hastings-sampling def-prob-cp trace-failure)]
 	[probabilistic-clojure.utils.stuff :only (indexed)]
 	[probabilistic-clojure.utils.sampling :only (sample-from normalize density)]
 	[probabilistic-clojure.embedded.choice-points
 	 :only (dirichlet-cp log-pdf-dirichlet *dirichlet-initial-factor* discrete-cp log-pdf-discrete)]
 	 
 	[incanter.core   :only (view sqrt)]
-	[incanter.stats  :only (sample-dirichlet sample-multinomial sample-uniform sample-gamma)])
+	[incanter.stats  :only (sample-dirichlet sample-multinomial sample-uniform sample-gamma pdf-gamma sample-normal pdf-normal)])
   (:import [java.awt Color Graphics Dimension]
 	   [java.awt.image BufferedImage]
 	   [javax.swing JPanel JFrame]
@@ -209,13 +209,39 @@ Each topic is a sequence of words that can appear in this topic."
   (let [total (reduce + gammas)]
     (vec (map #(/ % total) gammas))))
 
+(defn propose-gamma-prior [old-x shape rate]
+  ;; propose new value from Gamma prior
+  (let [new-x (sample-gamma 1 :shape shape :rate rate)]
+    [new-x
+     (Math/log (pdf-gamma new-x :shape shape :rate rate))
+     (Math/log (pdf-gamma old-x :shape shape :rate rate))]))
+
+(defn propose-gamma-normal [old-x shape sdev-factor]
+  (let [sdev  (* shape sdev-factor)
+        new-x (sample-normal 1 :mean old-x :sd sdev)]
+    (when (< new-x 0)
+      (trace-failure))
+    [new-x
+     (Math/log (pdf-normal new-x :mean old-x :sd sdev))
+     (Math/log (pdf-normal old-x :mean new-x :sd sdev))]))
+
+(defn propose-gamma-log-normal [old-x sdev]
+  (let [log-old-x (Math/log old-x)
+        log-new-x (sample-normal 1 :mean log-old-x :sd sdev)]
+    [(Math/exp log-new-x)
+     (Math/log (pdf-normal log-new-x :mean log-old-x :sd sdev))
+     (Math/log (pdf-normal log-old-x :mean log-new-x :sd sdev))]))
+
 ;; un-normalized Dirichlet distribution
 (def-prob-cp dirichlet-cp-gamma [alphas]
   :sampler [] (vec (for [a alphas] (sample-gamma 1 :shape a :rate 1)))
   :calc-log-lik [gs] (log-pdf-dirichlet (diri-probs gs) alphas)
   :proposer [old-gs] (let [idx (rand-int (count old-gs))
-                           new-g (sample-gamma 1 :shape (nth alphas idx) :rate 1)]
-                       [(assoc old-gs idx new-g) 0 0]))
+                           [new-g fwd bwd]
+                           ;; (propose-gamma-prior (nth old-gs idx) (nth alphas idx) 1)]
+                           (propose-gamma-normal (nth old-gs idx) (nth alphas idx) 1)]
+                           ;; (propose-gamma-log-normal (nth old-gs idx) 1)]
+                       [(assoc old-gs idx new-g) fwd bwd]))
 
 (defn lda-collapsed-gamma [topic-labels documents]
   (let [words (distinct (apply concat documents))
@@ -238,3 +264,10 @@ Each topic is a sequence of words that can appear in this topic."
 	    (into {}
 		  (for [[tl top] (zipmap topic-labels topic-dists)]
 		    [tl (zipmap words (diri-probs (gv top)))])))))
+
+(def-prob-cp gamma-cp [shape rate]
+  :sampler [] (sample-gamma 1 :shape shape :rate rate)
+  :calc-log-lik [x]
+  (Math/log (pdf-gamma x :shape shape :rate rate))
+  :proposer [old-x]
+  (propose-gamma-log-normal old-x 1))
