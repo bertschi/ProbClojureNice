@@ -6,7 +6,7 @@
                  [incanter "1.3.0-SNAPSHOT"]
 		 [org.apache.commons/commons-math "2.2"]]
   :plugins [[codox "0.6.1"]
-            [lein-swank "1.4.4"]])
+            ;; [lein-swank "1.4.4"]])
             ;; [lein-ritz "0.5.0"]])
-            ;; [org.clojure/tools.nrepl "0.2.0-beta10"]])
+            [org.clojure/tools.nrepl "0.2.0-beta10"]])
 
